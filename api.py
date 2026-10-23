@@ -108,7 +108,7 @@ def extract_ticket_from_callback(cb: str):
 def do_step(ticket: str) -> dict:
     meta, stream = build_meta_stream(ticket)
     if meta is None:
-        return {"success": False, "error": "ticket terlalu pendek"}
+        return {"success": False, "error": "ticket too short"}
     url = (
         f"{AUTH_API}/session/step"
         f"?ticket={urllib.parse.quote(ticket)}&service={SERVICE}"
@@ -166,14 +166,14 @@ def poll_key(ticket: str, tries: int = 10):
 def solve(raw_link: str):
     ticket = extract_ticket(raw_link)
     if len(ticket) < MIN_TICKET_LEN:
-        return None, "ticket terlalu pendek"
+        return None, "ticket too short"
 
     seen = set()
     gap_ts = 0.0
 
     for rnd in range(12):
         if ticket in seen:
-            return None, "ticket loop terdeteksi"
+            return None, "ticket loop detected"
         seen.add(ticket)
 
         if gap_ts:
@@ -200,7 +200,7 @@ def solve(raw_link: str):
         url = data.get("url", "")
         if url == "about:blank" or not url:
             k = poll_key(ticket)
-            return (k, None) if k else (None, "polling gagal")
+            return (k, None) if k else (None, "polling failed")
 
         cb = decode_callback_url(url)
         nt = extract_ticket_from_callback(cb) if cb else None
@@ -208,16 +208,16 @@ def solve(raw_link: str):
             ticket = nt
         else:
             k = poll_key(ticket)
-            return (k, None) if k else (None, "decode callback gagal")
+            return (k, None) if k else (None, "callback decode failed")
 
-    return None, "max round tercapai"
+    return None, "max rounds reached"
 
 
 # ─── routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def index():
-    return jsonify({"status": "ok", "note": "POST /solve dengan JSON {\"link\": \"...\"}"}), 200
+    return jsonify({"status": "ok", "note": "POST /solve with JSON {\"link\": \"...\"}"}), 200
 
 
 @app.post("/solve")
@@ -225,10 +225,10 @@ def route_solve():
     body = request.get_json(silent=True) or {}
     link = body.get("link", "").strip()
     if not link:
-        # juga terima query param ?link=...
+        # also accept query param ?link=...
         link = request.args.get("link", "").strip()
     if not link:
-        return jsonify({"success": False, "error": "param 'link' wajib ada"}), 400
+        return jsonify({"success": False, "error": "param 'link' is required"}), 400
 
     key, err = solve(link)
     if key:
