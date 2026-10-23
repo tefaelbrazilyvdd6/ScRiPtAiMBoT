@@ -5,6 +5,7 @@ import time, json, base64, urllib.parse
 import requests
 import urllib3
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from Crypto.Cipher import AES
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -23,6 +24,7 @@ MIN_STEP_GAP = 5.0
 STEP_THROTTLE_SLEEP = 2.0
 
 app = Flask(__name__)
+CORS(app)
 
 
 # ─── crypto ────────────────────────────────────────────────────────────────────
