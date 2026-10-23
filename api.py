@@ -4,7 +4,7 @@
 import time, json, base64, urllib.parse
 import requests
 import urllib3
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 from Crypto.Cipher import AES
 
@@ -235,7 +235,16 @@ def route_solve():
     key, err = solve(link)
     if key:
         return jsonify({"success": True, "key": key}), 200
-    return jsonify({"success": False, "error": err or "unknown"}), 500
+
+    messages = {
+        "ticket too short":      "Invalid link. Make sure you copied the full link from the Delta checkpoint page.",
+        "ticket loop detected":  "This link has already been used. Go back to Delta and get a fresh checkpoint link.",
+        "polling failed":        "Key could not be retrieved. The link may have expired — get a new one from Delta.",
+        "callback decode failed":"Checkpoint step failed. Try again with a fresh link from Delta.",
+        "max rounds reached":    "Solver timed out. PlatoRelay may be slow right now — try again in a few seconds.",
+    }
+    friendly = messages.get(err, "Something went wrong. Grab a fresh link from Delta and try again.")
+    return jsonify({"success": False, "error": friendly}), 500
 
 
 # ─── entrypoint ────────────────────────────────────────────────────────────────
