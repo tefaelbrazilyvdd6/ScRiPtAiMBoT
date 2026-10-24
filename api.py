@@ -11,7 +11,8 @@ from Crypto.Cipher import AES
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import os
-SOLVE_TOKEN = os.environ.get("SOLVE_TOKEN", "changeme-set-this-in-render")
+SOLVE_TOKEN    = os.environ.get("SOLVE_TOKEN", "changeme-set-this-in-render")
+HCAPTCHA_SECRET = os.environ.get("HCAPTCHA_SECRET", "ES_56bdac6bfd5c4d3ca6efd9bde2551de0")
 
 AUTH_API = "https://auth.platorelay.com/api"
 SERVICE = 3
@@ -225,6 +226,18 @@ def index():
     return jsonify({"status": "ok"}), 200
 
 
+def verify_hcaptcha(token: str) -> bool:
+    try:
+        r = requests.post(
+            "https://api.hcaptcha.com/siteverify",
+            data={"secret": HCAPTCHA_SECRET, "response": token},
+            timeout=8,
+        )
+        return r.json().get("success", False)
+    except Exception:
+        return False
+
+
 @app.post("/solve")
 def route_solve():
     token = request.headers.get("X-Token", "")
@@ -232,6 +245,11 @@ def route_solve():
         return jsonify({"success": False, "error": "forbidden"}), 403
 
     body = request.get_json(silent=True) or {}
+
+    captcha_token = body.get("captcha", "")
+    if not captcha_token or not verify_hcaptcha(captcha_token):
+        return jsonify({"success": False, "error": "captcha required"}), 403
+
     link = body.get("link", "").strip()
     if not link:
         link = request.args.get("link", "").strip()
