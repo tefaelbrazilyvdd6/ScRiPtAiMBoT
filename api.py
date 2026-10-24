@@ -4,7 +4,7 @@
 import time, json, base64, urllib.parse
 import requests
 import urllib3
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from Crypto.Cipher import AES
 
@@ -222,7 +222,7 @@ def solve(raw_link: str):
 
 @app.get("/")
 def index():
-    return render_template("index.html", solve_token=SOLVE_TOKEN)
+    return jsonify({"status": "ok"}), 200
 
 
 @app.post("/solve")
