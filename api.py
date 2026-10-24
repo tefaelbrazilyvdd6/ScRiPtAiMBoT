@@ -4,11 +4,14 @@
 import time, json, base64, urllib.parse
 import requests
 import urllib3
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from Crypto.Cipher import AES
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+import os
+SOLVE_TOKEN = os.environ.get("SOLVE_TOKEN", "changeme-set-this-in-render")
 
 AUTH_API = "https://auth.platorelay.com/api"
 SERVICE = 3
@@ -219,15 +222,18 @@ def solve(raw_link: str):
 
 @app.get("/")
 def index():
-    return jsonify({"status": "ok", "note": "POST /solve with JSON {\"link\": \"...\"}"}), 200
+    return render_template("index.html", solve_token=SOLVE_TOKEN)
 
 
 @app.post("/solve")
 def route_solve():
+    token = request.headers.get("X-Token", "")
+    if token != SOLVE_TOKEN:
+        return jsonify({"success": False, "error": "forbidden"}), 403
+
     body = request.get_json(silent=True) or {}
     link = body.get("link", "").strip()
     if not link:
-        # also accept query param ?link=...
         link = request.args.get("link", "").strip()
     if not link:
         return jsonify({"success": False, "error": "param 'link' is required"}), 400
