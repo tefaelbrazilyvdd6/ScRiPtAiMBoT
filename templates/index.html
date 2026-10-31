@@ -4,376 +4,481 @@
   <meta charset="UTF-8" />
   <meta name="ppck-ver" content="f6b7489098894f81602f77c1c167e736" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DeltaBypass — Free Delta Key Solver</title>
+  <title>DeltaBypass</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     :root {
-      --bg:       #0a0a0f;
-      --surface:  #111118;
-      --border:   #1e1e2e;
-      --accent:   #7c6af7;
-      --accent2:  #5b4fd4;
-      --text:     #e2e2f0;
-      --muted:    #6b6b8a;
-      --success:  #4ade80;
-      --error:    #f87171;
-      --mono:     'JetBrains Mono', monospace;
-      --sans:     'Inter', sans-serif;
+      --bg:      #0a0a0a;
+      --surface: #111111;
+      --border:  #1f1f1f;
+      --dim:     #2a2a2a;
+      --accent:  #e8ff47;
+      --fg:      #f0ece3;
+      --muted:   #4a4a42;
+      --comment: #3a3a32;
+      --success: #47ff8a;
+      --error:   #ff4747;
+      --mono:    'IBM Plex Mono', 'Courier New', monospace;
+      --display: 'Syne', sans-serif;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     html { scroll-behavior: smooth; }
 
     body {
       background: var(--bg);
-      color: var(--text);
-      font-family: var(--sans);
+      color: var(--fg);
+      font-family: var(--mono);
       min-height: 100vh;
       overflow-x: hidden;
-      position: relative;
     }
 
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(124,106,247,.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(124,106,247,.04) 1px, transparent 1px);
-      background-size: 40px 40px;
-      pointer-events: none;
-      z-index: 0;
-    }
-
+    /* ── scanline texture ── */
     body::after {
       content: '';
       position: fixed;
-      top: -200px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 800px;
-      height: 600px;
-      background: radial-gradient(ellipse at center, rgba(124,106,247,.12) 0%, transparent 70%);
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,.08) 2px,
+        rgba(0,0,0,.08) 4px
+      );
       pointer-events: none;
-      z-index: 0;
+      z-index: 9999;
     }
 
+    /* ── nav ── */
     nav {
       position: sticky;
       top: 0;
       z-index: 100;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      background: rgba(10,10,15,.8);
+      background: var(--bg);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
-      height: 60px;
+      height: 52px;
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
 
     .nav-logo {
+      font-family: var(--display);
+      font-weight: 800;
+      font-size: 17px;
+      letter-spacing: -0.01em;
+      color: var(--fg);
+      text-decoration: none;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+    }
+
+    .nav-logo .slash {
+      color: var(--accent);
       font-family: var(--mono);
-      font-weight: 700;
-      font-size: 16px;
-      color: var(--text);
-      text-decoration: none;
+      font-size: 20px;
+      line-height: 1;
     }
 
-    .nav-logo .dot {
-      width: 8px; height: 8px;
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .nav-status {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 6px; height: 6px;
       border-radius: 50%;
-      background: var(--accent);
-      box-shadow: 0 0 8px var(--accent);
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
     }
-
-    .nav-links { display: flex; gap: 28px; list-style: none; }
-    .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; transition: color .2s; }
-    .nav-links a:hover { color: var(--text); }
 
     .tg-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(36,161,222,.15);
-      border: 1px solid rgba(36,161,222,.3);
-      border-radius: 8px;
-      padding: 5px 12px;
-      font-size: 13px;
-      font-weight: 500;
-      color: #24a1de;
+      font-size: 11px;
+      color: var(--muted);
       text-decoration: none;
-      transition: background .2s;
+      letter-spacing: 0.05em;
+      border: 1px solid var(--border);
+      padding: 5px 12px;
+      transition: color .15s, border-color .15s;
     }
-    .tg-btn:hover { background: rgba(36,161,222,.25); }
 
+    .tg-btn:hover {
+      color: var(--fg);
+      border-color: var(--dim);
+    }
+
+    /* ── hero ── */
     .hero {
-      position: relative;
-      z-index: 1;
-      text-align: center;
-      padding: 96px 24px 64px;
+      padding: 64px 24px 0;
+      max-width: 860px;
+      margin: 0 auto;
     }
 
-    .hero-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(124,106,247,.1);
-      border: 1px solid rgba(124,106,247,.3);
-      border-radius: 999px;
-      padding: 5px 14px;
-      font-size: 12px;
-      font-family: var(--mono);
-      color: var(--accent);
-      margin-bottom: 24px;
-      letter-spacing: .04em;
+    .hero-line {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      margin-bottom: 18px;
     }
+
+    .hero-line .acc { color: var(--accent); }
 
     .hero h1 {
-      font-size: clamp(36px, 6vw, 64px);
-      font-weight: 700;
-      line-height: 1.1;
-      letter-spacing: -.02em;
-      margin-bottom: 16px;
+      font-family: var(--display);
+      font-weight: 800;
+      font-size: clamp(38px, 6vw, 72px);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+      color: var(--fg);
+      margin-bottom: 6px;
     }
 
-    .hero h1 span {
-      background: linear-gradient(135deg, var(--accent), #a78bfa);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    .hero p {
-      font-size: 18px;
-      color: var(--muted);
-      max-width: 480px;
-      margin: 0 auto 48px;
-      line-height: 1.6;
-    }
-
-    .solver-wrap {
-      position: relative;
-      z-index: 1;
-      max-width: 640px;
-      margin: 0 auto;
-      padding: 0 24px 80px;
-    }
-
-    .solver-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 32px;
-      box-shadow: 0 0 60px rgba(124,106,247,.06);
-    }
-
-    .solver-card label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      margin-bottom: 10px;
-    }
-
-    .input-row { display: flex; gap: 10px; }
-
-    .solver-card input[type="text"] {
-      flex: 1;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 13px 16px;
-      font-size: 14px;
-      font-family: var(--mono);
-      color: var(--text);
-      outline: none;
-      transition: border-color .2s, box-shadow .2s;
-    }
-
-    .solver-card input[type="text"]::placeholder { color: var(--muted); }
-    .solver-card input[type="text"]:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(124,106,247,.15);
-    }
-
-    .btn-solve {
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      color: #fff;
-      border: none;
-      border-radius: 10px;
-      padding: 13px 24px;
-      font-size: 14px;
-      font-weight: 600;
-      font-family: var(--sans);
-      cursor: pointer;
-      white-space: nowrap;
-      transition: opacity .2s, transform .1s;
-    }
-
-    .btn-solve:hover { opacity: .88; }
-    .btn-solve:active { transform: scale(.97); }
-    .btn-solve:disabled { opacity: .45; cursor: not-allowed; transform: none; }
-
-    .captcha-wrap {
-      margin-top: 18px;
-      display: flex;
-      justify-content: center;
-    }
-
-    .result-box {
-      margin-top: 20px;
-      border-radius: 10px;
-      padding: 16px;
-      font-family: var(--mono);
-      font-size: 13px;
-      display: none;
-      word-break: break-all;
-    }
-
-    .result-box.success {
-      background: rgba(74,222,128,.08);
-      border: 1px solid rgba(74,222,128,.25);
-      color: var(--success);
-      display: block;
-    }
-
-    .result-box.error {
-      background: rgba(248,113,113,.08);
-      border: 1px solid rgba(248,113,113,.25);
-      color: var(--error);
-      display: block;
-    }
-
-    .result-box.loading {
-      background: rgba(124,106,247,.06);
-      border: 1px solid rgba(124,106,247,.2);
-      color: var(--muted);
-      display: block;
-    }
-
-    .result-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-    .key-text { flex: 1; line-height: 1.5; }
-
-    .btn-copy {
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.1);
-      border-radius: 6px;
-      color: var(--text);
-      font-size: 12px;
-      font-family: var(--sans);
-      padding: 4px 10px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background .2s;
-      flex-shrink: 0;
-    }
-    .btn-copy:hover { background: rgba(255,255,255,.12); }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner {
-      display: inline-block;
-      width: 13px; height: 13px;
-      border: 2px solid rgba(124,106,247,.3);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
-      vertical-align: middle;
-      margin-right: 6px;
-    }
-
-    .info-strip {
-      position: relative;
-      z-index: 1;
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 24px 80px;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px;
-    }
-
-    .info-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-    }
-
-    .info-card .ic-icon { font-size: 24px; margin-bottom: 12px; }
-    .info-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
-    .info-card p { font-size: 13px; color: var(--muted); line-height: 1.6; }
-
-    .about {
-      position: relative;
-      z-index: 1;
-      max-width: 720px;
-      margin: 0 auto;
-      padding: 0 24px 96px;
-    }
-
-    .section-title {
-      font-size: 13px;
-      font-weight: 600;
+    .hero h1 .inv {
       color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: .1em;
-      margin-bottom: 12px;
-      font-family: var(--mono);
+      -webkit-text-stroke: 0;
     }
 
-    .about h2 { font-size: clamp(24px, 3vw, 32px); font-weight: 700; margin-bottom: 16px; letter-spacing: -.01em; }
-    .about p { font-size: 15px; color: var(--muted); line-height: 1.75; margin-bottom: 20px; }
+    .hero-sub {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 16px;
+      max-width: 55ch;
+      line-height: 1.7;
+    }
 
-    .steps { display: flex; flex-direction: column; gap: 12px; margin-top: 28px; }
-    .step { display: flex; gap: 16px; align-items: flex-start; }
+    /* ── solver ── */
+    .solver-wrap {
+      max-width: 860px;
+      margin: 48px auto 0;
+      padding: 0 24px;
+    }
 
-    .step-num {
-      width: 28px; height: 28px;
-      border-radius: 50%;
-      background: rgba(124,106,247,.15);
-      border: 1px solid rgba(124,106,247,.3);
+    .term-window {
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .term-titlebar {
+      background: var(--dim);
+      padding: 9px 14px;
       display: flex;
       align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--accent);
-      font-family: var(--mono);
-      flex-shrink: 0;
-      margin-top: 2px;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
     }
 
-    .step-body h4 { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
-    .step-body p { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 0; }
+    .term-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+    .td-red   { background: #3a1a1a; border: 1px solid #5a2a2a; }
+    .td-yel   { background: #3a3a1a; border: 1px solid #5a5a2a; }
+    .td-grn   { background: #1a3a1a; border: 1px solid #2a5a2a; }
 
-    footer {
-      position: relative;
-      z-index: 1;
-      border-top: 1px solid var(--border);
-      padding: 24px;
-      text-align: center;
+    .term-title {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 6px;
+      letter-spacing: 0.04em;
+    }
+
+    .term-body {
+      padding: 20px 20px 24px;
+    }
+
+    /* prompt lines */
+    .prompt-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .prompt-prefix {
+      color: var(--accent);
       font-size: 13px;
+      flex-shrink: 0;
+      margin-top: 1px;
+      user-select: none;
+    }
+
+    .prompt-comment {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      padding-left: 26px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 0;
+      flex: 1;
+      width: 100%;
+    }
+
+    .term-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--dim);
+      padding: 6px 0;
+      font-size: 13px;
+      font-family: var(--mono);
+      color: var(--fg);
+      outline: none;
+      caret-color: var(--accent);
+      min-width: 0;
+    }
+
+    .term-input::placeholder {
       color: var(--muted);
     }
 
-    footer a { color: var(--muted); }
-    footer a:hover { color: var(--text); }
+    .term-input:focus {
+      border-bottom-color: var(--accent);
+    }
 
-    @media (max-width: 480px) {
-      .input-row { flex-direction: column; }
-      .btn-solve { width: 100%; }
+    .btn-run {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      padding: 6px 20px;
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      flex-shrink: 0;
+      margin-left: 14px;
+      transition: opacity .15s;
+    }
+
+    .btn-run:hover { opacity: .85; }
+    .btn-run:active { opacity: .7; }
+    .btn-run:disabled { opacity: .3; cursor: not-allowed; }
+
+    .captcha-wrap {
+      padding-left: 26px;
+      margin-top: 16px;
+    }
+
+    /* output */
+    .term-output {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      display: none;
+    }
+
+    .term-output.visible { display: block; }
+
+    .out-line {
+      display: flex;
+      gap: 10px;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .out-prefix {
+      color: var(--muted);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .out-text { flex: 1; min-width: 0; word-break: break-all; }
+
+    .out-text.ok  { color: var(--success); }
+    .out-text.err { color: var(--error); }
+    .out-text.wait { color: var(--muted); }
+
+    .btn-copy {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 2px 10px;
+      cursor: pointer;
+      margin-left: 26px;
+      margin-top: 8px;
+      display: none;
+      transition: color .15s, border-color .15s;
+    }
+
+    .btn-copy.visible { display: inline-block; }
+    .btn-copy:hover { color: var(--fg); border-color: var(--accent); }
+
+    @keyframes blink { 50% { opacity: 0; } }
+    .cursor {
+      display: inline-block;
+      width: 8px; height: 13px;
+      background: var(--accent);
+      vertical-align: middle;
+      margin-left: 3px;
+      animation: blink 1s step-end infinite;
+    }
+
+    /* ── info section ── */
+    .info-wrap {
+      max-width: 860px;
+      margin: 60px auto 0;
+      padding: 0 24px;
+    }
+
+    .info-header {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .info-header::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1px;
+      border: 1px solid var(--border);
+      background: var(--border);
+    }
+
+    .info-cell {
+      background: var(--surface);
+      padding: 20px;
+    }
+
+    .info-cell .ic-label {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    .info-cell p {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    /* ── how it works ── */
+    .how-wrap {
+      max-width: 860px;
+      margin: 56px auto 0;
+      padding: 0 24px 80px;
+    }
+
+    .how-header {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .how-header::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      border: 1px solid var(--border);
+    }
+
+    .step {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .step:last-child { border-bottom: none; }
+
+    .step-num {
+      width: 44px;
+      flex-shrink: 0;
+      padding: 16px 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      font-size: 11px;
+      color: var(--accent);
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .step-body {
+      padding: 16px 20px;
+      background: var(--bg);
+    }
+
+    .step-body h4 {
+      font-size: 12px;
+      font-family: var(--mono);
+      font-weight: 500;
+      color: var(--fg);
+      margin-bottom: 4px;
+    }
+
+    .step-body p {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .step-body code {
+      color: var(--accent);
+      font-size: 11px;
+    }
+
+    /* ── footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+    }
+
+    @media (max-width: 560px) {
+      .input-row { flex-direction: column; gap: 12px; }
+      .btn-run { margin-left: 0; width: 100%; text-align: center; padding: 10px; }
+      .hero h1 { font-size: 38px; }
       nav { padding: 0 16px; }
-      .nav-links { display: none; }
+      .nav-status { display: none; }
+      footer { flex-direction: column; gap: 6px; text-align: center; }
     }
   </style>
 </head>
@@ -381,104 +486,115 @@
 
   <nav>
     <a class="nav-logo" href="#">
-      <span class="dot"></span>DeltaBypass
+      <span class="slash">/</span>DeltaBypass
     </a>
-    <ul class="nav-links">
-      <li><a href="#solver">Solver</a></li>
-      <li><a href="#about">How it works</a></li>
-    </ul>
-    <a class="tg-btn" href="https://t.me/yocnd" target="_blank" rel="noopener">
-      ✈ Updates
-    </a>
+    <div class="nav-right">
+      <div class="nav-status">
+        <div class="status-dot"></div>
+        online
+      </div>
+      <a class="tg-btn" href="https://t.me/yocnd" target="_blank" rel="noopener">✈ updates</a>
+    </div>
   </nav>
 
-  <section class="hero">
-    <div class="hero-badge">⚡ Free · No account required</div>
-    <h1>Bypass <span>Delta</span> checkpoints<br />instantly</h1>
-    <p>Paste your Delta checkpoint link and get your key in seconds. No downloads, no accounts.</p>
-  </section>
+  <div class="hero">
+    <div class="hero-line"><span class="acc">~</span> delta key solver — free, no account</div>
+    <h1>Skip the<br><span class="inv">checkpoint.</span></h1>
+    <p class="hero-sub">Paste your Delta checkpoint URL. Get your key back in under 30 seconds. No downloads, no sign-up, no nonsense.</p>
+  </div>
 
   <div class="solver-wrap" id="solver">
-    <div class="solver-card">
-      <label for="link-input">Delta checkpoint link</label>
-      <div class="input-row">
-        <input
-          type="text"
-          id="link-input"
-          placeholder="https://gateway.platoboost.com/a/8?..."
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <button class="btn-solve" id="solve-btn" onclick="solve()">Solve</button>
+    <div class="term-window">
+      <div class="term-titlebar">
+        <div class="term-dot td-red"></div>
+        <div class="term-dot td-yel"></div>
+        <div class="term-dot td-grn"></div>
+        <span class="term-title">deltabypass — solver v2</span>
       </div>
+      <div class="term-body">
+        <div class="prompt-comment"># paste your checkpoint link and hit RUN</div>
 
-      <div class="captcha-wrap">
-        <div class="cf-turnstile"
-             data-sitekey="0x4AAAAAAFuUDcKH0b9gZL9E"
-             data-theme="dark"
-             id="turnstile-widget">
+        <div class="prompt-line">
+          <span class="prompt-prefix">$</span>
+          <div class="input-row">
+            <input
+              type="text"
+              class="term-input"
+              id="link-input"
+              placeholder="https://gateway.platoboost.com/a/8?d=..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn-run" id="solve-btn" onclick="solve()">RUN</button>
+          </div>
         </div>
-      </div>
 
-      <div class="result-box" id="result-box">
-        <div class="result-inner">
-          <span class="key-text" id="result-text"></span>
-          <button class="btn-copy" id="copy-btn" onclick="copyKey()" style="display:none">Copy</button>
+        <div class="captcha-wrap">
+          <div class="cf-turnstile"
+               data-sitekey="0x4AAAAAAFuUDcKH0b9gZL9E"
+               data-theme="dark">
+          </div>
+        </div>
+
+        <div class="term-output" id="term-output">
+          <div class="out-line">
+            <span class="out-prefix">&gt;</span>
+            <span class="out-text" id="out-text"><span class="cursor"></span></span>
+          </div>
+          <button class="btn-copy" id="copy-btn" onclick="copyKey()">[ copy key ]</button>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="info-strip">
-    <div class="info-card">
-      <div class="ic-icon">🔓</div>
-      <h3>Instant key retrieval</h3>
-      <p>Our solver talks directly to PlatoRelay's API and fetches your key — no manual steps.</p>
-    </div>
-    <div class="info-card">
-      <div class="ic-icon">🛡️</div>
-      <h3>No data stored</h3>
-      <p>Your links are never logged or stored. Each request is processed and discarded immediately.</p>
-    </div>
-    <div class="info-card">
-      <div class="ic-icon">⚡</div>
-      <h3>Always free</h3>
-      <p>DeltaBypass will always be free. No subscriptions, no paywalls, no nonsense.</p>
+  <div class="info-wrap">
+    <div class="info-header">// system info</div>
+    <div class="info-grid">
+      <div class="info-cell">
+        <div class="ic-label">LATENCY</div>
+        <p>Keys returned in 10–30 seconds. Talks directly to PlatoRelay's API, no manual steps.</p>
+      </div>
+      <div class="info-cell">
+        <div class="ic-label">PRIVACY</div>
+        <p>Links are never logged. Each request is processed in memory and discarded immediately.</p>
+      </div>
+      <div class="info-cell">
+        <div class="ic-label">COST</div>
+        <p>Free. No subscriptions, no paywalls. Will stay free.</p>
+      </div>
     </div>
   </div>
 
-  <section class="about" id="about">
-    <div class="section-title">// how it works</div>
-    <h2>Three steps to your key</h2>
-    <p>Delta uses PlatoRelay checkpoints to protect their key system. DeltaBypass automates the entire verification flow so you don't have to.</p>
-
+  <div class="how-wrap" id="about">
+    <div class="how-header">// usage</div>
     <div class="steps">
       <div class="step">
-        <div class="step-num">1</div>
+        <div class="step-num">01</div>
         <div class="step-body">
-          <h4>Open Delta and hit "Get Key"</h4>
-          <p>Navigate through the Delta app until you reach the checkpoint page.</p>
+          <h4>Open Delta and tap "Get Key"</h4>
+          <p>Navigate to the checkpoint page inside the Delta app.</p>
         </div>
       </div>
       <div class="step">
-        <div class="step-num">2</div>
+        <div class="step-num">02</div>
         <div class="step-body">
-          <h4>Copy the checkpoint link</h4>
-          <p>Copy the full URL from your browser — it starts with <code style="color:var(--accent);font-family:var(--mono);font-size:12px">gateway.platoboost.com</code>.</p>
+          <h4>Copy the full checkpoint URL</h4>
+          <p>Copy the URL from your browser — starts with <code>gateway.platoboost.com</code>.</p>
         </div>
       </div>
       <div class="step">
-        <div class="step-num">3</div>
+        <div class="step-num">03</div>
         <div class="step-body">
-          <h4>Paste and click Solve</h4>
-          <p>Paste the link above, complete the captcha, and click Solve. Your Delta key appears in seconds.</p>
+          <h4>Paste and run</h4>
+          <p>Paste above, complete the captcha, hit RUN. Key appears in the terminal output.</p>
         </div>
       </div>
     </div>
-  </section>
+  </div>
 
   <footer>
-    <p>DeltaBypass &mdash; not affiliated with Delta or PlatoRelay &nbsp;·&nbsp; free forever</p>
+    <span>deltabypass — not affiliated with Delta or PlatoRelay</span>
+    <span>free forever</span>
   </footer>
 
   <script>
@@ -489,25 +605,27 @@
     async function solve() {
       const input  = document.getElementById('link-input');
       const btn    = document.getElementById('solve-btn');
+      const output = document.getElementById('term-output');
+      const outTxt = document.getElementById('out-text');
       const cpyBtn = document.getElementById('copy-btn');
       const link   = input.value.trim();
 
       if (!link) {
-        showResult('error', 'Paste your Delta checkpoint link first.');
+        showOut('err', 'error: no input — paste a checkpoint link first');
         return;
       }
 
       const captchaToken = turnstile.getResponse();
       if (!captchaToken) {
-        showResult('error', 'Please complete the captcha first.');
+        showOut('err', 'error: captcha not completed — check the box above');
         return;
       }
 
       btn.disabled = true;
-      btn.textContent = 'Solving…';
-      cpyBtn.style.display = 'none';
+      btn.textContent = '...';
+      cpyBtn.classList.remove('visible');
       currentKey = '';
-      showResult('loading', '<span class="spinner"></span>Solving checkpoint — this can take 10–30 seconds…');
+      showOut('wait', 'running solver — please wait (10–30s)<span class="cursor"></span>');
 
       try {
         const res = await fetch(API_URL, {
@@ -523,47 +641,52 @@
 
         if (data.success && data.key) {
           currentKey = data.key;
-          showResult('success', '✓ &nbsp;' + escHtml(data.key));
-          cpyBtn.style.display = '';
+          showOut('ok', 'key: ' + escHtml(data.key));
+          cpyBtn.classList.add('visible');
         } else {
-          showResult('error', '✗ &nbsp;' + escHtml(data.error || 'Unknown error — try a fresh link.'));
+          showOut('err', 'error: ' + escHtml(data.error || 'unknown — grab a fresh link and retry'));
         }
       } catch (e) {
-        showResult('error', '✗ &nbsp;Connection error — check your internet and try again.');
+        showOut('err', 'error: connection failed — check your internet and retry');
       }
 
       btn.disabled = false;
-      btn.textContent = 'Solve';
+      btn.textContent = 'RUN';
       turnstile.reset();
     }
 
-    function showResult(type, html) {
-      const box = document.getElementById('result-box');
-      const txt = document.getElementById('result-text');
-      box.className = 'result-box ' + type;
-      txt.innerHTML = html;
+    function showOut(type, html) {
+      const output = document.getElementById('term-output');
+      const outTxt = document.getElementById('out-text');
+      output.classList.add('visible');
+      outTxt.className = 'out-text ' + type;
+      outTxt.innerHTML = html;
     }
 
     function copyKey() {
       if (!currentKey) return;
       const btn = document.getElementById('copy-btn');
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(currentKey).then(() => flash(btn));
+        navigator.clipboard.writeText(currentKey).then(() => flash(btn)).catch(() => fallbackCopy(btn));
       } else {
-        const ta = document.createElement('textarea');
-        ta.value = currentKey;
-        ta.style.cssText = 'position:fixed;opacity:0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        flash(btn);
+        fallbackCopy(btn);
       }
     }
 
+    function fallbackCopy(btn) {
+      const ta = document.createElement('textarea');
+      ta.value = currentKey;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      flash(btn);
+    }
+
     function flash(btn) {
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
+      btn.textContent = '[ copied! ]';
+      setTimeout(() => { btn.textContent = '[ copy key ]'; }, 1800);
     }
 
     function escHtml(str) {
