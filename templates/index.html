@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="ppck-ver" content="f6b7489098894f81602f77c1c167e736" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DeltaBypass — Free Delta Key Solver</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-  <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
-  <meta name="ppck-ver" content="f6b7489098894f81602f77c1c167e736" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     :root {
       --bg:       #0a0a0f;
@@ -413,10 +413,10 @@
       </div>
 
       <div class="captcha-wrap">
-        <div class="h-captcha"
-             data-sitekey="6c9081de-4692-442e-ac52-7a526d26b6b4"
+        <div class="cf-turnstile"
+             data-sitekey="0x4AAAAAAFuUDcKH0b9gZL9E"
              data-theme="dark"
-             id="hcaptcha-widget">
+             id="turnstile-widget">
         </div>
       </div>
 
@@ -497,7 +497,7 @@
         return;
       }
 
-      const captchaToken = hcaptcha.getResponse();
+      const captchaToken = turnstile.getResponse();
       if (!captchaToken) {
         showResult('error', 'Please complete the captcha first.');
         return;
@@ -534,7 +534,7 @@
 
       btn.disabled = false;
       btn.textContent = 'Solve';
-      hcaptcha.reset();
+      turnstile.reset();
     }
 
     function showResult(type, html) {
