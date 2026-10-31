@@ -12,7 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import os
 SOLVE_TOKEN    = os.environ.get("SOLVE_TOKEN", "changeme-set-this-in-render")
-HCAPTCHA_SECRET = os.environ.get("HCAPTCHA_SECRET", "ES_56bdac6bfd5c4d3ca6efd9bde2551de0")
+TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "0x4AAAAAAFuUDflleweTZ8jRZuCffo7siyk")
 
 AUTH_API = "https://auth.platorelay.com/api"
 SERVICE = 3
@@ -226,11 +226,11 @@ def index():
     return render_template("index.html", solve_token=SOLVE_TOKEN)
 
 
-def verify_hcaptcha(token: str) -> bool:
+def verify_turnstile(token: str) -> bool:
     try:
         r = requests.post(
-            "https://api.hcaptcha.com/siteverify",
-            data={"secret": HCAPTCHA_SECRET, "response": token},
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data={"secret": TURNSTILE_SECRET, "response": token},
             timeout=8,
         )
         return r.json().get("success", False)
@@ -247,7 +247,7 @@ def route_solve():
     body = request.get_json(silent=True) or {}
 
     captcha_token = body.get("captcha", "")
-    if not captcha_token or not verify_hcaptcha(captcha_token):
+    if not captcha_token or not verify_turnstile(captcha_token):
         return jsonify({"success": False, "error": "captcha required"}), 403
 
     link = body.get("link", "").strip()
