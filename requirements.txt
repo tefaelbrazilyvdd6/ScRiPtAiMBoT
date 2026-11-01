@@ -3,3 +3,6 @@ flask-cors>=4.0.0
 requests>=2.32.0
 pycryptodome>=3.20.0
 gunicorn>=22.0.0
+websocket-client
+beautifulsoup4
+cryptography
