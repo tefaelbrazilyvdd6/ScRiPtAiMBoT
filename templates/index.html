@@ -1315,31 +1315,42 @@
             }
             if (raw && raw.type === 'captcha_needed') {
               llSessionId = raw.session_id;
-              // Show mid-process captcha card to the user
               showLLOut('wait', 'LootLabs requires a quick verification — see below...<span class="cursor"></span>');
               const mid = document.getElementById('ll-mid-captcha');
               mid.style.display = 'block';
-              // Reset state
               llMidCaptchaToken = '';
               document.getElementById('ll-mid-captcha-btn').disabled = true;
               document.getElementById('ll-mid-captcha-btn').textContent = 'Continue Bypass';
               const status = document.getElementById('ll-mid-captcha-status');
               status.classList.remove('solved');
-              status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for you to solve the captcha...</span>';
-              // Render Turnstile in the mid-captcha card
+              status.innerHTML = '<div class="verify-spinner"></div><span>Loading verification...</span>';
               const container = document.getElementById('ll-mid-captcha-container');
               container.innerHTML = '';
-              if (typeof turnstile !== 'undefined') {
-                if (llMidWidgetId !== null) {
-                  try { turnstile.remove(llMidWidgetId); } catch(e) {}
+              // Fetch the real LootLabs Turnstile sitekey, then render
+              (async () => {
+                let sitekey = '0x4AAAAAAFuUDcKH0b9gZL9E'; // fallback
+                try {
+                  const skResp = await fetch('/ll-captcha-sitekey', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Token': API_TOKEN },
+                    body: JSON.stringify({ cap_url: raw.cap_url }),
+                  });
+                  const skData = await skResp.json();
+                  if (skData.success && skData.sitekey) sitekey = skData.sitekey;
+                } catch(e) {}
+                status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for you to solve the captcha...</span>';
+                if (typeof turnstile !== 'undefined') {
+                  if (llMidWidgetId !== null) {
+                    try { turnstile.remove(llMidWidgetId); } catch(e) {}
+                  }
+                  llMidWidgetId = turnstile.render(container, {
+                    sitekey,
+                    theme: 'dark',
+                    callback: onLLMidCaptchaSolved,
+                    'expired-callback': onLLMidCaptchaExpired,
+                  });
                 }
-                llMidWidgetId = turnstile.render(container, {
-                  sitekey: '0x4AAAAAAFuUDcKH0b9gZL9E',
-                  theme: 'dark',
-                  callback: onLLMidCaptchaSolved,
-                  'expired-callback': onLLMidCaptchaExpired,
-                });
-              }
+              })();
               return;
             }
             nextLLStep();
