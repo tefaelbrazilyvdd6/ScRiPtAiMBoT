@@ -928,21 +928,8 @@ def route_solve_lootlabs_stream():
 
     def captcha_token_cb(cap_url):
         """Called by _ll_get_dest when LootLabs needs a captcha solved."""
-        # Try to extract the Turnstile sitekey from the captcha page so the
-        # frontend can render a native widget instead of a cross-origin iframe.
-        sitekey = None
-        try:
-            import requests as _req
-            _cap_r = _req.get(cap_url, timeout=8,
-                              headers={"User-Agent": LL_UA}, verify=False)
-            _sk = re.search(r'data-sitekey=["\']([^"\']{10,})["\']', _cap_r.text)
-            if _sk:
-                sitekey = _sk.group(1)
-        except Exception:
-            pass
-        # Tell the frontend: show the captcha widget to the user
-        q.put({"type": "captcha_needed", "session_id": session_id,
-               "cap_url": cap_url, "sitekey": sitekey})
+        # Tell the frontend: show the captcha iframe to the user
+        q.put({"type": "captcha_needed", "session_id": session_id, "cap_url": cap_url})
         # Block until the frontend POSTs the solved token (or 90s timeout)
         captcha_event.wait(timeout=90)
         return captcha_result.get("token")
