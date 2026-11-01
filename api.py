@@ -11,20 +11,20 @@ from Crypto.Cipher import AES
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import os
-SOLVE_TOKEN    = os.environ.get("SOLVE_TOKEN", "changeme-set-this-in-render")
+SOLVE_TOKEN      = os.environ.get("SOLVE_TOKEN", "changeme-set-this-in-render")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "0x4AAAAAAFuUDflleweTZ8jRZuCffo7siyk")
 
 AUTH_API = "https://auth.platorelay.com/api"
-SERVICE = 3
-VERSION = "8.1.2"
-UA = (
+SERVICE  = 3
+VERSION  = "8.1.2"
+UA       = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 "
     "Mobile/15E148 Safari/604.1"
 )
-SCREEN = "390x844"
+SCREEN         = "390x844"
 MIN_TICKET_LEN = 33
-MIN_STEP_GAP = 5.0
+MIN_STEP_GAP   = 5.0
 STEP_THROTTLE_SLEEP = 2.0
 
 app = Flask(__name__)
@@ -34,12 +34,12 @@ CORS(app)
 # ─── crypto ────────────────────────────────────────────────────────────────────
 
 def aes_ctr(plain: str, key_bytes, iv_bytes) -> bytes:
-    key = bytearray(key_bytes)
-    iv = bytearray(iv_bytes)
+    key  = bytearray(key_bytes)
+    iv   = bytearray(iv_bytes)
     data = plain.encode()
-    out = bytearray()
+    out  = bytearray()
     for i in range(0, len(data), 16):
-        blk = AES.new(bytes(key), AES.MODE_ECB).encrypt(bytes(iv))
+        blk  = AES.new(bytes(key), AES.MODE_ECB).encrypt(bytes(iv))
         out += bytes(a ^ b for a, b in zip(data[i : i + 16], blk))
         j = 15
         while True:
@@ -78,20 +78,27 @@ def build_meta_stream(ticket: str, now_ms: int = None):
 # ─── helpers ───────────────────────────────────────────────────────────────────
 
 def extract_ticket(arg: str) -> str:
+    """
+    Pulls the raw ticket string from whatever the user pastes:
+    - full URL  (https://auth.platorelay.com/a?d=<ticket>)
+    - bare ticket string
+    Works for any path: /a, /bypass, /checkpoint, etc.
+    """
     t = arg.strip()
     if t.startswith("http"):
-        qs = urllib.parse.parse_qs(urllib.parse.urlparse(t).query)
+        parsed = urllib.parse.urlparse(t)
+        qs = urllib.parse.parse_qs(parsed.query)
         if "d" in qs:
             return qs["d"][0]
     return t
 
 
 def decode_callback_url(loot_url: str):
-    qs = urllib.parse.parse_qs(urllib.parse.urlparse(loot_url).query)
+    qs     = urllib.parse.parse_qs(urllib.parse.urlparse(loot_url).query)
     r_param = qs.get("r", [""])[0]
     if not r_param:
         return None
-    b64 = r_param.replace("-", "+").replace("_", "/")
+    b64     = r_param.replace("-", "+").replace("_", "/")
     padding = (4 - len(b64) % 4) % 4
     try:
         dec = base64.b64decode(b64 + "=" * padding).decode("utf-8")
@@ -109,13 +116,41 @@ def extract_ticket_from_callback(cb: str):
     return qs.get("d", [None])[0]
 
 
+# ─── session init ──────────────────────────────────────────────────────────────
+
+def init_session(ticket: str):
+    """
+    Hit the /a landing page to initialize the server-side session for this
+    ticket before we start stepping. Without this, PlatoRelay has no context
+    for the ticket and will reject or loop the step calls.
+    Best-effort — we continue regardless of outcome.
+    """
+    url = f"https://auth.platorelay.com/a?d={urllib.parse.quote(ticket)}"
+    try:
+        requests.get(
+            url,
+            headers={
+                "User-Agent":       UA,
+                "Accept":           "text/html,application/xhtml+xml,*/*",
+                "Accept-Language":  "en-US,en;q=0.9",
+                "x-client-name":    "platoboost webclient",
+                "x-client-version": VERSION,
+            },
+            timeout=12,
+            verify=False,
+            allow_redirects=True,
+        )
+    except Exception:
+        pass
+
+
 # ─── core logic ────────────────────────────────────────────────────────────────
 
 def do_step(ticket: str) -> dict:
     meta, stream = build_meta_stream(ticket)
     if meta is None:
         return {"success": False, "error": "ticket too short"}
-    url = (
+    url  = (
         f"{AUTH_API}/session/step"
         f"?ticket={urllib.parse.quote(ticket)}&service={SERVICE}"
     )
@@ -126,10 +161,10 @@ def do_step(ticket: str) -> dict:
         url,
         data=body,
         headers={
-            "User-Agent": UA,
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*",
-            "x-client-name": "platoboost webclient",
+            "User-Agent":       UA,
+            "Content-Type":     "application/json",
+            "Accept":           "application/json, text/plain, */*",
+            "x-client-name":    "platoboost webclient",
             "x-client-version": VERSION,
         },
         timeout=15,
@@ -151,9 +186,9 @@ def poll_key(ticket: str, tries: int = 10):
             r = requests.get(
                 url,
                 headers={
-                    "User-Agent": UA,
-                    "Accept": "application/json",
-                    "x-client-name": "platoboost webclient",
+                    "User-Agent":       UA,
+                    "Accept":           "application/json",
+                    "x-client-name":    "platoboost webclient",
                     "x-client-version": VERSION,
                 },
                 timeout=10,
@@ -174,20 +209,25 @@ def solve(raw_link: str):
     if len(ticket) < MIN_TICKET_LEN:
         return None, "ticket too short"
 
-    seen = set()
-    gap_ts = 0.0
+    # ── warm up the server-side session before any step calls ──────────────────
+    init_session(ticket)
+    time.sleep(1.5)   # give PlatoRelay a moment to register the session
 
-    for rnd in range(12):
-        if ticket in seen:
-            return None, "ticket loop detected"
-        seen.add(ticket)
+    # ── track visited tickets PER-STEP, not the starting ticket across rounds ──
+    # old code added `ticket` to `seen` at the top of the loop, so the SAME
+    # ticket on round 2 (retry after throttle) triggered "loop detected".
+    # now we only flag a ticket as looping if we receive it back as a *new*
+    # redirect target — i.e. the server is cycling us in circles.
+    redirect_seen = set()
+    gap_ts        = 0.0
 
+    for rnd in range(14):
         if gap_ts:
             elapsed = time.time() - gap_ts
             if elapsed < MIN_STEP_GAP:
                 time.sleep(MIN_STEP_GAP - elapsed)
 
-        r = do_step(ticket)
+        r      = do_step(ticket)
         gap_ts = time.time()
 
         if not isinstance(r, dict) or not r.get("success"):
@@ -195,11 +235,14 @@ def solve(raw_link: str):
             if "too fast" in msg or "slow down" in msg:
                 time.sleep(STEP_THROTTLE_SLEEP)
                 continue
+            if "already" in msg or "used" in msg:
+                # server says ticket is consumed — nothing we can do
+                return None, "ticket already used"
             time.sleep(1.5)
             continue
 
         data = r.get("data") or {}
-        k = data.get("key")
+        k    = data.get("key")
         if k and k != "KEY_NOT_FOUND":
             return k, None
 
@@ -210,7 +253,12 @@ def solve(raw_link: str):
 
         cb = decode_callback_url(url)
         nt = extract_ticket_from_callback(cb) if cb else None
+
         if nt and len(nt) > 50:
+            # only flag as loop if we've already visited this NEW ticket
+            if nt in redirect_seen:
+                return None, "redirect loop detected"
+            redirect_seen.add(nt)
             ticket = nt
         else:
             k = poll_key(ticket)
@@ -261,11 +309,12 @@ def route_solve():
         return jsonify({"success": True, "key": key}), 200
 
     messages = {
-        "ticket too short":      "Invalid link. Make sure you copied the full link from the Delta checkpoint page.",
-        "ticket loop detected":  "This link has already been used. Go back to Delta and get a fresh checkpoint link.",
-        "polling failed":        "Key could not be retrieved. The link may have expired — get a new one from Delta.",
-        "callback decode failed":"Checkpoint step failed. Try again with a fresh link from Delta.",
-        "max rounds reached":    "Solver timed out. PlatoRelay may be slow right now — try again in a few seconds.",
+        "ticket too short":       "Invalid link. Make sure you copied the full link from the Delta checkpoint page.",
+        "ticket already used":    "This link has already been used. Go back to Delta and get a fresh checkpoint link.",
+        "redirect loop detected": "PlatoRelay returned a redirect loop. Get a fresh link from Delta.",
+        "polling failed":         "Key could not be retrieved. The link may have expired — get a new one from Delta.",
+        "callback decode failed": "Checkpoint step failed. Try again with a fresh link from Delta.",
+        "max rounds reached":     "Solver timed out. PlatoRelay may be slow right now — try again in a few seconds.",
     }
     friendly = messages.get(err, "Something went wrong. Grab a fresh link from Delta and try again.")
     return jsonify({"success": False, "error": friendly}), 500
@@ -274,6 +323,5 @@ def route_solve():
 # ─── entrypoint ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
