@@ -805,14 +805,24 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                 f"&session_id={item.get('task_id')}&info={idx + 1}")
 
         done = {"result": None}
-        emit("opening WebSocket connection...")
-        ws_thread = threading.Thread(
-            target=_ll_canserbero,
-            args=(session, ws_domain, [bind], key, tid, ws_session, origin, done),
-            kwargs={"TLeft": 40},
-            daemon=True,
-        )
-        ws_thread.start()
+        ws_domains = [ws_domain]
+        for _bd in [params.get("websocket_backup"), params.get("websocket_bckup2")]:
+            if _bd and _bd not in ws_domains:
+                ws_domains.append(_bd)
+
+        # Launch all available WS domains in parallel — first result wins
+        emit(f"opening WebSocket connection ({len(ws_domains)} domain(s))...")
+        ws_threads = []
+        for _wsd in ws_domains:
+            _t = threading.Thread(
+                target=_ll_canserbero,
+                args=(session, _wsd, [bind], key, tid, ws_session, origin, done),
+                kwargs={"TLeft": 40},
+                daemon=True,
+            )
+            _t.start()
+            ws_threads.append(_t)
+        ws_thread = ws_threads[0]  # kept for join below
 
         _ll_fire(_ll_beacon_post, session, f"https://{shard_host}/st?uid={urid}&cat={task_id}")
         ap = bind.get("action_pixel_url") or TCP.get("action_pixel_url")
@@ -861,7 +871,10 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
             else:
                 emit("captcha task detected but no solver provided — result may fail")
 
-        ws_thread.join(timeout=40)
+        # Wait for first result — poll every 0.2s up to 42s total
+        _deadline = time.time() + 42
+        while time.time() < _deadline and not done["result"]:
+            time.sleep(0.2)
 
         if done["result"]:
             emit(f"bypassed! ({taken()})")
