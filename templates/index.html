@@ -493,6 +493,140 @@
       footer { flex-direction: column; gap: 6px; text-align: center; }
     }
 
+    /* ── verification step overlay ── */
+    .verify-step {
+      margin: 20px 0 0;
+      padding-left: 0;
+    }
+
+    .verify-card {
+      background: #141414;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 28px 24px 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 10px;
+      position: relative;
+    }
+
+    .verify-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: #1a1a1a;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg);
+      margin-bottom: 4px;
+    }
+
+    .verify-title {
+      font-family: var(--display);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--fg);
+    }
+
+    .verify-sub {
+      font-size: 12px;
+      color: var(--muted);
+      max-width: 34ch;
+      line-height: 1.6;
+    }
+
+    .verify-turnstile {
+      margin: 10px 0 4px;
+      border: 1px solid var(--border);
+      background: #111;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: center;
+      min-height: 68px;
+      align-items: center;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .verify-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .verify-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--muted);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .verify-status.solved {
+      color: var(--success);
+    }
+
+    .verify-status.solved .verify-spinner {
+      border-color: transparent;
+      border-top-color: transparent;
+      background: var(--success);
+      border-radius: 50%;
+      animation: none;
+    }
+
+    .verify-continue {
+      width: 100%;
+      max-width: 320px;
+      padding: 12px;
+      font-size: 13px;
+      letter-spacing: 0.06em;
+      margin: 4px 0 0;
+    }
+
+    .verify-continue:disabled {
+      background: var(--dim);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    .verify-continue:not(:disabled) {
+      background: var(--accent);
+    }
+
+    .verify-cancel {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      padding: 4px 8px;
+      text-decoration: underline;
+      transition: color .15s;
+    }
+
+    .verify-cancel:hover { color: var(--fg); }
+
+    /* ── input validation error ── */
+    .input-error {
+      font-size: 11px;
+      color: var(--error);
+      padding-left: 26px;
+      margin-top: 6px;
+      display: none;
+    }
+    .input-error.visible { display: block; }
+
     /* ── oauth notice ── */
     .oauth-notice {
       display: none;
@@ -610,13 +744,30 @@
             <button class="btn-run" id="solve-btn" onclick="solve()">RUN</button>
           </div>
         </div>
+        <div class="input-error" id="delta-input-error">⚠ Not a valid Delta checkpoint link — must be a gateway.platoboost.com URL</div>
 
-        <div class="captcha-wrap" id="delta-captcha-wrap">
-          <div class="cf-turnstile"
-               data-sitekey="0x4AAAAAAFuUDcKH0b9gZL9E"
-               data-callback="onCaptchaSolved"
-               data-expired-callback="onCaptchaExpired"
-               data-theme="dark">
+        <!-- Delta verification step -->
+        <div class="verify-step" id="delta-verify-step" style="display:none">
+          <div class="verify-card">
+            <div class="verify-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            </div>
+            <div class="verify-title">Verification Required</div>
+            <div class="verify-sub">Complete the security check below to continue</div>
+            <div class="verify-turnstile">
+              <div class="cf-turnstile"
+                   data-sitekey="0x4AAAAAAFuUDcKH0b9gZL9E"
+                   data-callback="onCaptchaSolved"
+                   data-expired-callback="onCaptchaExpired"
+                   data-theme="dark">
+              </div>
+            </div>
+            <div class="verify-status" id="delta-verify-status">
+              <div class="verify-spinner"></div>
+              <span>Waiting for verification...</span>
+            </div>
+            <button class="btn-run verify-continue" id="delta-continue-btn" onclick="proceedSolve()" disabled>Continue</button>
+            <button class="verify-cancel" onclick="cancelVerify('delta')">Cancel</button>
           </div>
         </div>
 
@@ -659,9 +810,26 @@
             <button class="btn-run" id="ll-solve-btn" onclick="solveLootlabs()">RUN</button>
           </div>
         </div>
+        <div class="input-error" id="ll-input-error">⚠ Not a valid LootLabs link — must be a lootlabs.gg or loot-link.com URL</div>
 
-        <div class="captcha-wrap">
-          <div id="ll-turnstile-container"></div>
+        <!-- LootLabs verification step -->
+        <div class="verify-step" id="ll-verify-step" style="display:none">
+          <div class="verify-card">
+            <div class="verify-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            </div>
+            <div class="verify-title">LootLabs Verification</div>
+            <div class="verify-sub">Check the Turnstile box below and click Continue to get your destination link.</div>
+            <div class="verify-turnstile">
+              <div id="ll-turnstile-container"></div>
+            </div>
+            <div class="verify-status" id="ll-verify-status">
+              <div class="verify-spinner"></div>
+              <span>Waiting for Turnstile solve...</span>
+            </div>
+            <button class="btn-run verify-continue" id="ll-continue-btn" onclick="proceedSolveLootlabs()" disabled>Continue</button>
+            <button class="verify-cancel" onclick="cancelVerify('lootlabs')">Cancel Bypass</button>
+          </div>
         </div>
 
         <div class="term-output" id="ll-term-output">
@@ -734,8 +902,82 @@
     let currentKey    = '';
     let currentLLResult = '';
 
-    function onCaptchaSolved(token)  { captchaToken = token; }
-    function onCaptchaExpired()      { captchaToken = ''; }
+    // ── link validators ──────────────────────────────────────────────────────
+    function isValidDeltaLink(url) {
+      try {
+        const u = new URL(url);
+        return u.hostname === 'gateway.platoboost.com';
+      } catch { return false; }
+    }
+
+    function isValidLootLabsLink(url) {
+      try {
+        const u = new URL(url);
+        return u.hostname.endsWith('lootlabs.gg') || u.hostname.endsWith('loot-link.com');
+      } catch { return false; }
+    }
+
+    // ── captcha callbacks ─────────────────────────────────────────────────────
+    function onCaptchaSolved(token) {
+      captchaToken = token;
+      // show solved state on delta verify card
+      const status = document.getElementById('delta-verify-status');
+      const btn    = document.getElementById('delta-continue-btn');
+      if (status) {
+        status.classList.add('solved');
+        status.innerHTML = '<div class="verify-spinner"></div><span>Verification complete ✓</span>';
+      }
+      if (btn) btn.disabled = false;
+    }
+
+    function onCaptchaExpired() {
+      captchaToken = '';
+      const status = document.getElementById('delta-verify-status');
+      const btn    = document.getElementById('delta-continue-btn');
+      if (status) {
+        status.classList.remove('solved');
+        status.innerHTML = '<div class="verify-spinner"></div><span>Verification expired — please retry</span>';
+      }
+      if (btn) btn.disabled = true;
+    }
+
+    function onLLCaptchaSolved(token) {
+      captchaToken = token;
+      const status = document.getElementById('ll-verify-status');
+      const btn    = document.getElementById('ll-continue-btn');
+      if (status) {
+        status.classList.add('solved');
+        status.innerHTML = '<div class="verify-spinner"></div><span>Verification complete ✓</span>';
+      }
+      if (btn) btn.disabled = false;
+    }
+
+    function onLLCaptchaExpired() {
+      captchaToken = '';
+      const status = document.getElementById('ll-verify-status');
+      const btn    = document.getElementById('ll-continue-btn');
+      if (status) {
+        status.classList.remove('solved');
+        status.innerHTML = '<div class="verify-spinner"></div><span>Verification expired — please retry</span>';
+      }
+      if (btn) btn.disabled = true;
+    }
+
+    function cancelVerify(tab) {
+      if (tab === 'delta') {
+        document.getElementById('delta-verify-step').style.display = 'none';
+        document.getElementById('solve-btn').disabled = false;
+        document.getElementById('solve-btn').textContent = 'RUN';
+        captchaToken = '';
+        if (typeof turnstile !== 'undefined') turnstile.reset();
+      } else {
+        document.getElementById('ll-verify-step').style.display = 'none';
+        document.getElementById('ll-solve-btn').disabled = false;
+        document.getElementById('ll-solve-btn').textContent = 'RUN';
+        captchaToken = '';
+        if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
+      }
+    }
 
     // ── tab switching ────────────────────────────────────────────────────────
     function switchTab(tab) {
@@ -753,14 +995,6 @@
         llPanel.style.display    = '';
         deltaBtn.classList.remove('active');
         llBtn.classList.add('active');
-        if (!llWidgetId && typeof turnstile !== 'undefined') {
-          llWidgetId = turnstile.render('#ll-turnstile-container', {
-            sitekey: '0x4AAAAAAFuUDcKH0b9gZL9E',
-            theme:   'dark',
-            callback:          (t) => { captchaToken = t; },
-            'expired-callback': ()  => { captchaToken = ''; },
-          });
-        }
       }
     }
 
@@ -816,15 +1050,44 @@
 
     // ── Delta solver ─────────────────────────────────────────────────────────
     let deltaAbort = null;
+    let pendingDeltaLink = '';
 
-    async function solve() {
-      const input  = document.getElementById('link-input');
+    function solve() {
+      const input    = document.getElementById('link-input');
+      const errorDiv = document.getElementById('delta-input-error');
+      const link     = input.value.trim();
+
+      // Step 1: validate link
+      errorDiv.classList.remove('visible');
+      if (!link) { showOut('err', 'error: no input — paste a checkpoint link first'); return; }
+      if (!isValidDeltaLink(link)) {
+        errorDiv.classList.add('visible');
+        input.focus();
+        return;
+      }
+
+      // Step 2: show verification step
+      pendingDeltaLink = link;
+      document.getElementById('delta-verify-step').style.display = 'block';
+      document.getElementById('solve-btn').disabled = true;
+      // Reset verify state
+      const status = document.getElementById('delta-verify-status');
+      status.classList.remove('solved');
+      status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for verification...</span>';
+      document.getElementById('delta-continue-btn').disabled = true;
+      captchaToken = '';
+      if (typeof turnstile !== 'undefined') turnstile.reset();
+    }
+
+    async function proceedSolve() {
       const btn    = document.getElementById('solve-btn');
       const cpyBtn = document.getElementById('copy-btn');
-      const link   = input.value.trim();
+      const link   = pendingDeltaLink;
 
-      if (!link) { showOut('err', 'error: no input — paste a checkpoint link first'); return; }
-      if (!captchaToken) { showOut('err', 'error: captcha not completed — check the box above'); return; }
+      if (!captchaToken) return;
+
+      // Hide verify step
+      document.getElementById('delta-verify-step').style.display = 'none';
 
       if (deltaAbort) deltaAbort.abort();
       deltaAbort = new AbortController();
@@ -887,15 +1150,55 @@
 
     // ── LootLabs solver ──────────────────────────────────────────────────────
     let llAbort = null;
+    let pendingLLLink = '';
 
-    async function solveLootlabs() {
-      const input  = document.getElementById('ll-link-input');
+    function solveLootlabs() {
+      const input    = document.getElementById('ll-link-input');
+      const errorDiv = document.getElementById('ll-input-error');
+      const link     = input.value.trim();
+
+      // Step 1: validate link
+      errorDiv.classList.remove('visible');
+      if (!link) { showLLOut('err', 'error: no input — paste a LootLabs link first'); return; }
+      if (!isValidLootLabsLink(link)) {
+        errorDiv.classList.add('visible');
+        input.focus();
+        return;
+      }
+
+      // Step 2: show verification step
+      pendingLLLink = link;
+      document.getElementById('ll-verify-step').style.display = 'block';
+      document.getElementById('ll-solve-btn').disabled = true;
+      // Reset verify state
+      const status = document.getElementById('ll-verify-status');
+      status.classList.remove('solved');
+      status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for Turnstile solve...</span>';
+      document.getElementById('ll-continue-btn').disabled = true;
+      captchaToken = '';
+
+      // Init/reset LL turnstile widget
+      if (llWidgetId !== null && typeof turnstile !== 'undefined') {
+        turnstile.reset(llWidgetId);
+      } else if (typeof turnstile !== 'undefined') {
+        llWidgetId = turnstile.render('#ll-turnstile-container', {
+          sitekey: '0x4AAAAAAFuUDcKH0b9gZL9E',
+          theme:   'dark',
+          callback:           onLLCaptchaSolved,
+          'expired-callback': onLLCaptchaExpired,
+        });
+      }
+    }
+
+    async function proceedSolveLootlabs() {
       const btn    = document.getElementById('ll-solve-btn');
       const cpyBtn = document.getElementById('ll-copy-btn');
-      const link   = input.value.trim();
+      const link   = pendingLLLink;
 
-      if (!link) { showLLOut('err', 'error: no input — paste a LootLabs link first'); return; }
-      if (!captchaToken) { showLLOut('err', 'error: captcha not completed — check the box above'); return; }
+      if (!captchaToken) return;
+
+      // Hide verify step
+      document.getElementById('ll-verify-step').style.display = 'none';
 
       if (llAbort) llAbort.abort();
       llAbort = new AbortController();
