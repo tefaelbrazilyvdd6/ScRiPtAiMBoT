@@ -832,19 +832,22 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                 try:
                     token = captcha_token_cb(cap_url)
                     if token == "iframe_done":
-                        # User solved captcha directly on LootLabs' domain via iframe.
-                        # Token was submitted to their backend by their own JS.
-                        # Skip /captcha/verify — just fire the td tracking pixel and let WS finish.
-                        emit("captcha solved via iframe — continuing...")
+                        # Fallback: user used the legacy iframe path; we don't have a real token.
+                        # Fire the tracking pixel and let the WebSocket try — it may still
+                        # succeed if the user's browser session happened to verify on LootLabs' side.
+                        emit("captcha iframe completed — waiting for WebSocket result...")
                         _ll_fire(_ll_get, session,
                             f"https://{SYNCER}/td?ac=captcha&urid={urid}&=&cat={task_id}&tid={tid}")
+                        # Note: without a real token from /captcha/verify the WebSocket
+                        # is unlikely to return a result.  The native-Turnstile path
+                        # (sitekey sent in captcha_needed) avoids this entirely.
                     elif token:
                         emit("captcha token received, verifying...")
                         vrf = session.post(
                             f"https://{SYNCER}/captcha/verify",
                             json={"urid": str(urid), "token": token},
                             headers={
-                                "Origin":       f"https://{SYNCER}",
+                                "Origin":       origin,   # must match the LootLabs page, not SYNCER
                                 "Referer":      cap_url,
                                 "Content-Type": "application/json",
                             },
@@ -925,8 +928,21 @@ def route_solve_lootlabs_stream():
 
     def captcha_token_cb(cap_url):
         """Called by _ll_get_dest when LootLabs needs a captcha solved."""
-        # Tell the frontend: show this captcha URL to the user
-        q.put({"type": "captcha_needed", "session_id": session_id, "cap_url": cap_url})
+        # Try to extract the Turnstile sitekey from the captcha page so the
+        # frontend can render a native widget instead of a cross-origin iframe.
+        sitekey = None
+        try:
+            import requests as _req
+            _cap_r = _req.get(cap_url, timeout=8,
+                              headers={"User-Agent": LL_UA}, verify=False)
+            _sk = re.search(r'data-sitekey=["\']([^"\']{10,})["\']', _cap_r.text)
+            if _sk:
+                sitekey = _sk.group(1)
+        except Exception:
+            pass
+        # Tell the frontend: show the captcha widget to the user
+        q.put({"type": "captcha_needed", "session_id": session_id,
+               "cap_url": cap_url, "sitekey": sitekey})
         # Block until the frontend POSTs the solved token (or 90s timeout)
         captcha_event.wait(timeout=90)
         return captcha_result.get("token")
