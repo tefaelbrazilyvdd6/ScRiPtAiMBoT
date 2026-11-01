@@ -164,6 +164,28 @@ def poll_key(ticket: str, tries: int = 10):
     return None
 
 
+def _check_oauth_redirect(ticket: str) -> str | None:
+    """
+    After a ticket gets consumed by the server triggering an OAuth flow,
+    the status endpoint often holds the OAuth redirect URL.
+    Returns the URL if found, else None.
+    """
+    url = f"{AUTH_API}/session/status?ticket={urllib.parse.quote(ticket)}&service={SERVICE}"
+    try:
+        r = requests.get(url, headers={
+            "User-Agent": DELTA_UA, "Accept": "application/json",
+            "x-client-name": "platoboost webclient", "x-client-version": VERSION,
+        }, timeout=10, verify=False)
+        d = r.json()
+        data = d.get("data") or {}
+        redirect = data.get("url") or data.get("redirect") or ""
+        if redirect and _is_oauth_url(redirect):
+            return redirect
+    except Exception:
+        pass
+    return None
+
+
 def solve_delta(raw_link: str, status_cb=None):
     def emit(msg):
         if status_cb:
@@ -199,6 +221,14 @@ def solve_delta(raw_link: str, status_cb=None):
                 time.sleep(STEP_THROTTLE_SLEEP)
                 seen.discard(ticket)
                 continue
+            # server says ticket consumed — before giving up, check if the
+            # step actually triggered an OAuth redirect on their side
+            if "already" in msg or "used" in msg or "expired" in msg:
+                emit("ticket may be consumed — checking for OAuth redirect...")
+                oauth_url = _check_oauth_redirect(ticket)
+                if oauth_url:
+                    return None, "oauth:" + oauth_url
+                return None, "ticket already used"
             emit(f"step failed ({msg or 'no message'}), retrying...")
             time.sleep(1.5)
             continue
@@ -582,7 +612,7 @@ def _ll_canserbero(session, ws_domain, tasks, p_key, tid, ws_session, origin, do
             header=_ll_ws_header_list(session),
             origin=origin if str(origin).startswith("http") else f"https://{origin}",
         )
-        ws.settimeout(0.1)
+        ws.settimeout(0.5)
 
         def _ping():
             while not ping_stop.wait(10):
@@ -610,10 +640,6 @@ def _ll_canserbero(session, ws_domain, tasks, p_key, tid, ws_session, origin, do
             result = _ll_parse_r_payload(message)
             if result:
                 done["result"] = result
-                # signal the main thread immediately so it doesn't wait the full timeout
-                ev = done.get("event")
-                if ev:
-                    ev.set()
                 return
     except Exception:
         pass
@@ -778,8 +804,7 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                 f"https://enaightdecipie.com/?event=task_clicked"
                 f"&session_id={item.get('task_id')}&info={idx + 1}")
 
-        result_event = threading.Event()
-        done = {"result": None, "event": result_event}
+        done = {"result": None}
         emit("opening WebSocket connection...")
         ws_thread = threading.Thread(
             target=_ll_canserbero,
@@ -833,9 +858,7 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
             else:
                 emit("captcha task detected but no solver provided — result may fail")
 
-        # wait for result_event instead of joining the thread —
-        # exits the moment WebSocket delivers a result, not after 40s
-        result_event.wait(timeout=40)
+        ws_thread.join(timeout=40)
 
         if done["result"]:
             emit(f"bypassed! ({taken()})")
