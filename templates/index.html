@@ -492,6 +492,68 @@
       .nav-status { display: none; }
       footer { flex-direction: column; gap: 6px; text-align: center; }
     }
+
+    /* ── oauth notice ── */
+    .oauth-notice {
+      display: none;
+      margin: 18px 0 0;
+      border: 1px solid #5a1a1a;
+      background: rgba(90, 20, 20, 0.25);
+      padding: 16px 18px;
+    }
+    .oauth-notice.visible { display: block; }
+    .oauth-notice .on-title {
+      font-size: 12px;
+      color: #ff6b6b;
+      font-weight: 500;
+      margin-bottom: 10px;
+      letter-spacing: 0.04em;
+    }
+    .oauth-notice ol {
+      margin: 0;
+      padding-left: 18px;
+      list-style: decimal;
+    }
+    .oauth-notice ol li {
+      font-size: 12px;
+      color: #c97070;
+      line-height: 1.9;
+    }
+    .oauth-notice ol li code {
+      color: #ffaaaa;
+      font-size: 11px;
+    }
+    .oauth-notice .on-link {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+
+    /* ── tab switcher ── */
+    .tab-bar {
+      max-width: 860px;
+      margin: 32px auto 0;
+      padding: 0 24px;
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      padding: 10px 20px;
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+    .tab-btn:hover { color: var(--fg); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -510,11 +572,19 @@
   </nav>
 
   <div class="hero">
-    <div class="hero-line"><span class="acc">~</span> delta key solver — free, no account</div>
+    <div class="hero-line"><span class="acc">~</span> delta & lootlabs solver — free, no account</div>
     <h1>Skip the<br><span class="inv">checkpoint.</span></h1>
-    <p class="hero-sub">Paste your Delta checkpoint URL. Get your key back in under 30 seconds. No downloads, no sign-up, no nonsense.</p>
+    <p class="hero-sub">Paste your Delta checkpoint or LootLabs link. Get your key or destination URL in seconds. No downloads, no sign-up.</p>
   </div>
 
+  <!-- ── tab bar ── -->
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tab-delta-btn" onclick="switchTab('delta')">Delta</button>
+    <button class="tab-btn" id="tab-ll-btn" onclick="switchTab('lootlabs')">LootLabs</button>
+  </div>
+
+  <!-- ── Delta solver (existing) ── -->
+  <div id="tab-delta-panel">
   <div class="solver-wrap" id="solver">
     <div class="term-window">
       <div class="term-titlebar">
@@ -541,9 +611,11 @@
           </div>
         </div>
 
-        <div class="captcha-wrap">
+        <div class="captcha-wrap" id="delta-captcha-wrap">
           <div class="cf-turnstile"
                data-sitekey="0x4AAAAAAFuUDcKH0b9gZL9E"
+               data-callback="onCaptchaSolved"
+               data-expired-callback="onCaptchaExpired"
                data-theme="dark">
           </div>
         </div>
@@ -557,6 +629,51 @@
         </div>
       </div>
     </div>
+  </div>
+  </div>
+
+  <!-- ── LootLabs solver ── -->
+  <div id="tab-ll-panel" style="display:none">
+  <div class="solver-wrap">
+    <div class="term-window">
+      <div class="term-titlebar">
+        <div class="term-dot td-red"></div>
+        <div class="term-dot td-yel"></div>
+        <div class="term-dot td-grn"></div>
+        <span class="term-title">lootlabs bypass — solver v1</span>
+      </div>
+      <div class="term-body">
+        <div class="prompt-comment"># paste your lootlabs link and hit RUN</div>
+
+        <div class="prompt-line">
+          <span class="prompt-prefix">$</span>
+          <div class="input-row">
+            <input
+              type="text"
+              class="term-input"
+              id="ll-link-input"
+              placeholder="https://links.lootlabs.gg/s?..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn-run" id="ll-solve-btn" onclick="solveLootlabs()">RUN</button>
+          </div>
+        </div>
+
+        <div class="captcha-wrap">
+          <div id="ll-turnstile-container"></div>
+        </div>
+
+        <div class="term-output" id="ll-term-output">
+          <div class="out-line">
+            <span class="out-prefix">&gt;</span>
+            <span class="out-text" id="ll-out-text"><span class="cursor"></span></span>
+          </div>
+          <button class="btn-copy" id="ll-copy-btn" onclick="copyLLResult()">[ copy url ]</button>
+        </div>
+      </div>
+    </div>
+  </div>
   </div>
 
   <div class="info-wrap">
@@ -610,10 +727,47 @@
   </footer>
 
   <script>
-    const API_URL   = '/solve';
     const API_TOKEN = '{{ solve_token }}';
-    let currentKey  = '';
 
+    // ── captcha token tracking ───────────────────────────────────────────────
+    let captchaToken  = '';
+    let llWidgetId    = null;
+    let currentKey    = '';
+    let currentLLResult = '';
+
+    function onCaptchaSolved(token)  { captchaToken = token; }
+    function onCaptchaExpired()      { captchaToken = ''; }
+
+    // ── tab switching ────────────────────────────────────────────────────────
+    function switchTab(tab) {
+      const deltaPanel = document.getElementById('tab-delta-panel');
+      const llPanel    = document.getElementById('tab-ll-panel');
+      const deltaBtn   = document.getElementById('tab-delta-btn');
+      const llBtn      = document.getElementById('tab-ll-btn');
+
+      if (tab === 'delta') {
+        deltaPanel.style.display = '';
+        llPanel.style.display    = 'none';
+        deltaBtn.classList.add('active');
+        llBtn.classList.remove('active');
+      } else {
+        deltaPanel.style.display = 'none';
+        llPanel.style.display    = '';
+        deltaBtn.classList.remove('active');
+        llBtn.classList.add('active');
+        // render LootLabs Turnstile on first switch
+        if (!llWidgetId && typeof turnstile !== 'undefined') {
+          llWidgetId = turnstile.render('#ll-turnstile-container', {
+            sitekey: '0x4AAAAAAFuUDcKH0b9gZL9E',
+            theme:   'dark',
+            callback:          (t) => { captchaToken = t; },
+            'expired-callback': ()  => { captchaToken = ''; },
+          });
+        }
+      }
+    }
+
+    // ── Delta solver ─────────────────────────────────────────────────────────
     async function solve() {
       const input  = document.getElementById('link-input');
       const btn    = document.getElementById('solve-btn');
@@ -627,7 +781,6 @@
         return;
       }
 
-      const captchaToken = turnstile.getResponse();
       if (!captchaToken) {
         showOut('err', 'error: captcha not completed — check the box above');
         return;
@@ -641,9 +794,9 @@
 
       try {
         const controller = new AbortController();
-        const timeoutId  = setTimeout(() => controller.abort(), 45000); // 45s hard cap
+        const timeoutId  = setTimeout(() => controller.abort(), 45000);
 
-        const res = await fetch(API_URL, {
+        const res = await fetch('/solve', {
           method: 'POST',
           signal: controller.signal,
           headers: {
@@ -654,26 +807,19 @@
         });
         clearTimeout(timeoutId);
 
-        // surface non-JSON / auth errors before parsing
         const contentType = res.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
           showOut('err', 'error: server returned HTTP ' + res.status + ' (non-JSON) — SOLVE_TOKEN env var may not match the template value');
-          btn.disabled = false;
-          btn.textContent = 'RUN';
-          turnstile.reset();
+          btn.disabled = false; btn.textContent = 'RUN'; turnstile.reset(); captchaToken = '';
           return;
         }
-
         if (res.status === 403) {
-          showOut('err', 'error: 403 forbidden — SOLVE_TOKEN in Render env does not match the token baked into this page. Redeploy after syncing them.');
-          btn.disabled = false;
-          btn.textContent = 'RUN';
-          turnstile.reset();
+          showOut('err', 'error: 403 forbidden — SOLVE_TOKEN in Render env does not match.');
+          btn.disabled = false; btn.textContent = 'RUN'; turnstile.reset(); captchaToken = '';
           return;
         }
 
         const data = await res.json();
-
         if (data.success && data.key) {
           currentKey = data.key;
           showOut('ok', 'key: ' + escHtml(data.key));
@@ -689,9 +835,7 @@
         }
       }
 
-      btn.disabled = false;
-      btn.textContent = 'RUN';
-      turnstile.reset();
+      btn.disabled = false; btn.textContent = 'RUN'; turnstile.reset(); captchaToken = '';
     }
 
     function showOut(type, html) {
@@ -705,16 +849,102 @@
     function copyKey() {
       if (!currentKey) return;
       const btn = document.getElementById('copy-btn');
+      _doCopy(currentKey, btn);
+    }
+
+    // ── LootLabs solver ──────────────────────────────────────────────────────
+    async function solveLootlabs() {
+      const input  = document.getElementById('ll-link-input');
+      const btn    = document.getElementById('ll-solve-btn');
+      const outTxt = document.getElementById('ll-out-text');
+      const output = document.getElementById('ll-term-output');
+      const cpyBtn = document.getElementById('ll-copy-btn');
+      const link   = input.value.trim();
+
+      if (!link) {
+        showLLOut('err', 'error: no input — paste a LootLabs link first');
+        return;
+      }
+      if (!captchaToken) {
+        showLLOut('err', 'error: captcha not completed — check the box above');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '...';
+      cpyBtn.classList.remove('visible');
+      currentLLResult = '';
+      showLLOut('wait', 'running bypass — please wait (up to 60s)<span class="cursor"></span>');
+
+      try {
+        const controller = new AbortController();
+        const timeoutId  = setTimeout(() => controller.abort(), 70000);
+
+        const res = await fetch('/solve-lootlabs', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Token': API_TOKEN,
+          },
+          body: JSON.stringify({ link, captcha: captchaToken }),
+        });
+        clearTimeout(timeoutId);
+
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          showLLOut('err', 'error: server returned HTTP ' + res.status + ' — check Render logs');
+          btn.disabled = false; btn.textContent = 'RUN';
+          if (llWidgetId !== null) { turnstile.reset(llWidgetId); } captchaToken = '';
+          return;
+        }
+
+        const data = await res.json();
+        if (data.success && data.result) {
+          currentLLResult = data.result;
+          showLLOut('ok', 'result: ' + escHtml(data.result));
+          cpyBtn.classList.add('visible');
+        } else {
+          showLLOut('err', 'error: ' + escHtml(data.error || 'bypass failed — try a fresh link'));
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          showLLOut('err', 'error: timed out — LootLabs servers may be slow, try again');
+        } else {
+          showLLOut('err', 'error: connection failed — ' + escHtml(e.message || 'check your internet'));
+        }
+      }
+
+      btn.disabled = false; btn.textContent = 'RUN';
+      if (llWidgetId !== null) { turnstile.reset(llWidgetId); } captchaToken = '';
+    }
+
+    function showLLOut(type, html) {
+      const output = document.getElementById('ll-term-output');
+      const outTxt = document.getElementById('ll-out-text');
+      output.classList.add('visible');
+      outTxt.className = 'out-text ' + type;
+      outTxt.innerHTML = html;
+    }
+
+    function copyLLResult() {
+      if (!currentLLResult) return;
+      const btn = document.getElementById('ll-copy-btn');
+      _doCopy(currentLLResult, btn);
+    }
+
+    // ── shared helpers ────────────────────────────────────────────────────────
+    function _doCopy(text, btn) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(currentKey).then(() => flash(btn)).catch(() => fallbackCopy(btn));
+        navigator.clipboard.writeText(text).then(() => flash(btn)).catch(() => fallbackCopy(text, btn));
       } else {
-        fallbackCopy(btn);
+        fallbackCopy(text, btn);
       }
     }
 
-    function fallbackCopy(btn) {
+    function fallbackCopy(text, btn) {
       const ta = document.createElement('textarea');
-      ta.value = currentKey;
+      ta.value = text;
       ta.style.cssText = 'position:fixed;opacity:0';
       document.body.appendChild(ta);
       ta.select();
@@ -724,8 +954,9 @@
     }
 
     function flash(btn) {
+      const orig = btn.textContent;
       btn.textContent = '[ copied! ]';
-      setTimeout(() => { btn.textContent = '[ copy key ]'; }, 1800);
+      setTimeout(() => { btn.textContent = orig; }, 1800);
     }
 
     function escHtml(str) {
@@ -738,6 +969,9 @@
 
     document.getElementById('link-input').addEventListener('keydown', e => {
       if (e.key === 'Enter') solve();
+    });
+    document.getElementById('ll-link-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') solveLootlabs();
     });
   </script>
 
