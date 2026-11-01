@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="ppck-ver" content="f6b7489098894f81602f77c1c167e736" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DeltaBypass</title>
+  <title>BypassCity</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%230a0a0a'/%3E%3Cpolygon points='19,3 10,17 15,17 13,29 22,15 17,15' fill='%23e8ff47'/%3E%3C/svg%3E">
   <link rel="shortcut icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%230a0a0a'/%3E%3Cpolygon points='19,3 10,17 15,17 13,29 22,15 17,15' fill='%23e8ff47'/%3E%3C/svg%3E">
   <meta name="theme-color" content="#0a0a0a">
@@ -666,37 +666,14 @@
       padding-top: 10px;
     }
 
-    /* ── tab switcher ── */
-    .tab-bar {
-      max-width: 860px;
-      margin: 32px auto 0;
-      padding: 0 24px;
-      display: flex;
-      gap: 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .tab-btn {
-      background: transparent;
-      border: none;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      padding: 10px 20px;
-      font-family: var(--mono);
-      font-size: 12px;
-      letter-spacing: 0.06em;
-      color: var(--muted);
-      cursor: pointer;
-      transition: color .15s, border-color .15s;
-    }
-    .tab-btn:hover { color: var(--fg); }
-    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
   </style>
 </head>
 <body>
 
   <nav>
     <a class="nav-logo" href="#">
-      <span class="slash">/</span>DeltaBypass
+      <span class="slash">/</span>BypassCity
     </a>
     <div class="nav-right">
       <div class="nav-status">
@@ -708,108 +685,23 @@
   </nav>
 
   <div class="hero">
-    <div class="hero-line"><span class="acc">~</span> delta & lootlabs solver — free, no account</div>
-    <h1>Skip the<br><span class="inv">checkpoint.</span></h1>
-    <p class="hero-sub">Paste your Delta checkpoint or LootLabs link. Get your key or destination URL in seconds. No downloads, no sign-up.</p>
+    <div class="hero-line"><span class="acc">~</span> delta key bypass — free, no account</div>
+    <h1>Bypass the<br><span class="inv">checkpoint.</span></h1>
+    <p class="hero-sub">Follow the steps below to get your Delta key. Takes under a minute. No downloads, no sign-up.</p>
   </div>
 
-  <!-- ── tab bar ── -->
-  <div class="tab-bar">
-    <button class="tab-btn active" id="tab-delta-btn" onclick="switchTab('delta')">Delta</button>
-    <button class="tab-btn" id="tab-ll-btn" onclick="switchTab('lootlabs')">LootLabs</button>
-  </div>
-
-  <!-- ── Delta solver (existing) ── -->
-  <div id="tab-delta-panel">
-  <div class="solver-wrap" id="solver">
-    <div class="term-window">
-      <div class="term-titlebar">
-        <div class="term-dot td-red"></div>
-        <div class="term-dot td-yel"></div>
-        <div class="term-dot td-grn"></div>
-        <span class="term-title">deltabypass — solver v2</span>
-      </div>
-      <div class="term-body">
-        <div class="prompt-comment"># paste your checkpoint link and hit RUN</div>
-
-        <div class="prompt-line">
-          <span class="prompt-prefix">$</span>
-          <div class="input-row">
-            <input
-              type="text"
-              class="term-input"
-              id="link-input"
-              placeholder="https://gateway.platoboost.com/a/8?d=..."
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <button class="btn-run" id="solve-btn" onclick="solve()">RUN</button>
-          </div>
-        </div>
-        <div class="input-error" id="delta-input-error">⚠ Not a valid Delta checkpoint link — must be a gateway.platoboost.com URL</div>
-
-        <!-- Delta verification step -->
-        <div class="verify-step" id="delta-verify-step" style="display:none">
-          <div class="verify-card">
-            <div class="verify-icon">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-            </div>
-            <div class="verify-title">Verification Required</div>
-            <div class="verify-sub">Complete the security check below to continue</div>
-            <div class="verify-turnstile">
-              <div class="cf-turnstile"
-                   data-sitekey="0x4AAAAAAFuUDcKH0b9gZL9E"
-                   data-callback="onCaptchaSolved"
-                   data-expired-callback="onCaptchaExpired"
-                   data-theme="dark">
-              </div>
-            </div>
-            <div class="verify-status" id="delta-verify-status">
-              <div class="verify-spinner"></div>
-              <span>Waiting for verification...</span>
-            </div>
-            <button class="btn-run verify-continue" id="delta-continue-btn" onclick="proceedSolve()" disabled>Continue</button>
-            <button class="verify-cancel" onclick="cancelVerify('delta')">Cancel</button>
-          </div>
-        </div>
-
-        <div class="term-output" id="term-output">
-          <div class="out-line">
-            <span class="out-prefix">&gt;</span>
-            <span class="out-text" id="out-text"><span class="cursor"></span></span>
-          </div>
-          <button class="btn-copy" id="copy-btn" onclick="copyKey()">[ copy key ]</button>
-        </div>
-
-        <!-- OAuth / account verification notice -->
-        <div class="oauth-notice" id="delta-oauth-notice">
-          <div class="on-title">⚠ Account Verification Required</div>
-          <ol>
-            <li>Open your Delta checkpoint link in your browser.</li>
-            <li>Wait 5 seconds, then tap <strong>Continue</strong>.</li>
-            <li>You'll receive a LootLabs link — copy it.</li>
-            <li>Go to the <strong>LootLabs</strong> tab on this site.</li>
-            <li>Paste the link there and hit <strong>RUN</strong> — it will give you the key.</li>
-          </ol>
-          <div class="on-link" id="delta-oauth-link"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  </div>
-
-  <!-- ── LootLabs solver ── -->
-  <div id="tab-ll-panel" style="display:none">
+  <!-- ── LootLabs solver (only panel) ── -->
+  <div id="tab-ll-panel" style="margin-top:32px">
   <div class="solver-wrap">
     <div class="term-window">
       <div class="term-titlebar">
         <div class="term-dot td-red"></div>
         <div class="term-dot td-yel"></div>
         <div class="term-dot td-grn"></div>
-        <span class="term-title">lootlabs bypass — solver v1</span>
+        <span class="term-title">bypasscity — delta key solver</span>
       </div>
       <div class="term-body">
-        <div class="prompt-comment"># paste your lootlabs link and hit RUN</div>
+        <div class="prompt-comment"># follow the steps above, then paste your lootlabs link here and hit RUN</div>
 
         <div class="prompt-line">
           <span class="prompt-prefix">$</span>
@@ -843,7 +735,7 @@
               <span>Waiting for Turnstile solve...</span>
             </div>
             <button class="btn-run verify-continue" id="ll-continue-btn" onclick="proceedSolveLootlabs()" disabled>Continue</button>
-            <button class="verify-cancel" onclick="cancelVerify('lootlabs')">Cancel Bypass</button>
+            <button class="verify-cancel" onclick="cancelVerify()">Cancel Bypass</button>
           </div>
         </div>
 
@@ -882,8 +774,8 @@
     <div class="info-header">// system info</div>
     <div class="info-grid">
       <div class="info-cell">
-        <div class="ic-label">LATENCY</div>
-        <p>Keys returned in 10–30 seconds. Talks directly to PlatoRelay's API, no manual steps.</p>
+        <div class="ic-label">HOW LONG</div>
+        <p>Under a minute. The LootLabs bypass takes 10–30 seconds once you paste the link.</p>
       </div>
       <div class="info-cell">
         <div class="ic-label">PRIVACY</div>
@@ -897,34 +789,41 @@
   </div>
 
   <div class="how-wrap" id="about">
-    <div class="how-header">// usage</div>
+    <div class="how-header">// how to bypass delta</div>
     <div class="steps">
       <div class="step">
         <div class="step-num">01</div>
         <div class="step-body">
           <h4>Open Delta and tap "Get Key"</h4>
-          <p>Navigate to the checkpoint page inside the Delta app.</p>
+          <p>This opens the checkpoint page in your browser.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">02</div>
         <div class="step-body">
-          <h4>Copy the full checkpoint URL</h4>
-          <p>Copy the URL from your browser — starts with <code>gateway.platoboost.com</code>.</p>
+          <h4>Wait 5 seconds, then tap Continue</h4>
+          <p>Let the page sit for 5 seconds before clicking the Continue button — don't skip this.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">03</div>
         <div class="step-body">
-          <h4>Paste and run</h4>
-          <p>Paste above, complete the captcha, hit RUN. Key appears in the terminal output.</p>
+          <h4>Copy the LootLabs link you get redirected to</h4>
+          <p>After tapping Continue, you'll land on a LootLabs link. Copy the full URL from your browser.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <div class="step-body">
+          <h4>Paste the LootLabs link above and hit RUN</h4>
+          <p>Paste it in the input field at the top of this page, complete the captcha, and hit RUN. Your key will appear in the output.</p>
         </div>
       </div>
     </div>
   </div>
 
   <footer>
-    <span>deltabypass — not affiliated with Delta or PlatoRelay</span>
+    <span>bypasscity — not affiliated with Delta or PlatoRelay</span>
     <span>free forever</span>
   </footer>
 
@@ -936,27 +835,16 @@
     let llMidWidgetId     = null;
     let llMidCaptchaToken = '';
     let llSessionId       = null;
-    let currentKey        = '';
     let currentLLResult   = '';
 
     // ── page visibility / stream resilience ──────────────────────────────────
     // Track whether each stream is genuinely alive. We only show "connection
     // lost" if the SSE actually closed while the tab was hidden — NOT just
     // because the user opened an ad tab and came back.
-    let deltaStreamAlive = false;
-    let llStreamAlive    = false;
+    let llStreamAlive = false;
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        // Delta: stream was in progress but SSE is now dead
-        const outText = document.getElementById('out-text');
-        if (outText && outText.classList.contains('wait') && !deltaStreamAlive) {
-          showOut('err', '✗ Connection lost — please paste your link and try again.');
-          const btn = document.getElementById('solve-btn');
-          if (btn) { btn.disabled = false; btn.textContent = 'RUN'; }
-          if (deltaAbort) { try { deltaAbort.abort(); } catch(e) {} }
-        }
-        // LootLabs: stream was in progress but SSE is now dead
         const llOutText = document.getElementById('ll-out-text');
         if (llOutText && llOutText.classList.contains('wait') && !llStreamAlive) {
           const mid = document.getElementById('ll-mid-captcha');
@@ -970,14 +858,6 @@
     });
 
     // ── link validators ──────────────────────────────────────────────────────
-    function isValidDeltaLink(url) {
-      try {
-        const u = new URL(url);
-        return u.hostname === 'gateway.platoboost.com' ||
-               u.hostname === 'auth.platorelay.com';
-      } catch { return false; }
-    }
-
     function isValidLootLabsLink(url) {
       try {
         const u = new URL(url);
@@ -986,29 +866,6 @@
     }
 
     // ── captcha callbacks ─────────────────────────────────────────────────────
-    function onCaptchaSolved(token) {
-      captchaToken = token;
-      // show solved state on delta verify card
-      const status = document.getElementById('delta-verify-status');
-      const btn    = document.getElementById('delta-continue-btn');
-      if (status) {
-        status.classList.add('solved');
-        status.innerHTML = '<div class="verify-spinner"></div><span>Verification complete ✓</span>';
-      }
-      if (btn) btn.disabled = false;
-    }
-
-    function onCaptchaExpired() {
-      captchaToken = '';
-      const status = document.getElementById('delta-verify-status');
-      const btn    = document.getElementById('delta-continue-btn');
-      if (status) {
-        status.classList.remove('solved');
-        status.innerHTML = '<div class="verify-spinner"></div><span>Verification expired — please retry</span>';
-      }
-      if (btn) btn.disabled = true;
-    }
-
     function onLLCaptchaSolved(token) {
       captchaToken = token;
       const status = document.getElementById('ll-verify-status');
@@ -1070,39 +927,12 @@
       showLLOut('wait', 'Verification done — resuming bypass...<span class="cursor"></span>');
     }
 
-    function cancelVerify(tab) {
-      if (tab === 'delta') {
-        document.getElementById('delta-verify-step').style.display = 'none';
-        document.getElementById('solve-btn').disabled = false;
-        document.getElementById('solve-btn').textContent = 'RUN';
-        captchaToken = '';
-        if (typeof turnstile !== 'undefined') turnstile.reset();
-      } else {
-        document.getElementById('ll-verify-step').style.display = 'none';
-        document.getElementById('ll-solve-btn').disabled = false;
-        document.getElementById('ll-solve-btn').textContent = 'RUN';
-        captchaToken = '';
-        if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
-      }
-    }
-
-    // ── tab switching ────────────────────────────────────────────────────────
-    function switchTab(tab) {
-      const deltaPanel = document.getElementById('tab-delta-panel');
-      const llPanel    = document.getElementById('tab-ll-panel');
-      const deltaBtn   = document.getElementById('tab-delta-btn');
-      const llBtn      = document.getElementById('tab-ll-btn');
-      if (tab === 'delta') {
-        deltaPanel.style.display = '';
-        llPanel.style.display    = 'none';
-        deltaBtn.classList.add('active');
-        llBtn.classList.remove('active');
-      } else {
-        deltaPanel.style.display = 'none';
-        llPanel.style.display    = '';
-        deltaBtn.classList.remove('active');
-        llBtn.classList.add('active');
-      }
+    function cancelVerify() {
+      document.getElementById('ll-verify-step').style.display = 'none';
+      document.getElementById('ll-solve-btn').disabled = false;
+      document.getElementById('ll-solve-btn').textContent = 'RUN';
+      captchaToken = '';
+      if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
     }
 
     // ── SSE helpers ──────────────────────────────────────────────────────────
@@ -1157,143 +987,6 @@
       });
     }
 
-    // ── Delta solver ─────────────────────────────────────────────────────────
-    let deltaAbort = null;
-    let pendingDeltaLink = '';
-
-    function solve() {
-      const input    = document.getElementById('link-input');
-      const errorDiv = document.getElementById('delta-input-error');
-      const link     = input.value.trim();
-
-      // Step 1: validate link
-      errorDiv.classList.remove('visible');
-      if (!link) { showOut('err', 'error: no input — paste a checkpoint link first'); return; }
-      if (!isValidDeltaLink(link)) {
-        errorDiv.classList.add('visible');
-        input.focus();
-        return;
-      }
-
-      // Step 2: show verification step
-      pendingDeltaLink = link;
-      document.getElementById('delta-verify-step').style.display = 'block';
-      document.getElementById('solve-btn').disabled = true;
-      // Reset verify state
-      const status = document.getElementById('delta-verify-status');
-      status.classList.remove('solved');
-      status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for verification...</span>';
-      document.getElementById('delta-continue-btn').disabled = true;
-      captchaToken = '';
-      if (typeof turnstile !== 'undefined') turnstile.reset();
-    }
-
-    async function proceedSolve() {
-      const btn    = document.getElementById('solve-btn');
-      const cpyBtn = document.getElementById('copy-btn');
-      const link   = pendingDeltaLink;
-
-      if (!captchaToken) return;
-
-      // Hide verify step and oauth notice
-      document.getElementById('delta-verify-step').style.display = 'none';
-      document.getElementById('delta-oauth-notice').classList.remove('visible');
-      document.getElementById('delta-oauth-link').innerHTML = '';
-
-      if (deltaAbort) deltaAbort.abort();
-      deltaAbort = new AbortController();
-
-      btn.disabled = true;
-      btn.textContent = '...';
-      cpyBtn.classList.remove('visible');
-      currentKey = '';
-      showOut('wait', 'initialising solver...<span class="cursor"></span>');
-
-      let step = 0;
-      const deltaSteps = [
-        'Connecting to bypass service...',
-        'Reading your checkpoint link...',
-        'Contacting Delta servers...',
-        'Working through the checkpoint...',
-        'Almost there, retrieving your key...',
-      ];
-
-      function nextStep() {
-        const msg = deltaSteps[Math.min(step, deltaSteps.length - 1)];
-        step++;
-        showOut('wait', escHtml(msg) + '<span class="cursor"></span>');
-      }
-
-      nextStep();
-
-      const savedToken = captchaToken;
-      captchaToken = '';
-
-      deltaStreamAlive = true;
-      _sseStream('/solve-stream',
-        { link, captcha: savedToken },
-        {
-          signal: deltaAbort.signal,
-          onStatus: (_msg, _raw) => nextStep(),
-          onDone: (data) => {
-            deltaStreamAlive = false;
-            if (data.success && data.key) {
-              currentKey = data.key;
-              showOut('ok', '✓ Your key is ready: ' + escHtml(data.key));
-              cpyBtn.classList.add('visible');
-            } else if (data.oauth) {
-              const oauthUrl  = data.oauth_url || '';
-              const isGoogle  = oauthUrl.includes('google.com');
-              const isDiscord = oauthUrl.includes('discord.com');
-              const provider  = isGoogle ? 'Google' : isDiscord ? 'Discord' : null;
-
-              const titleEl = document.querySelector('#delta-oauth-notice .on-title');
-              const listEl  = document.querySelector('#delta-oauth-notice ol');
-
-              titleEl.textContent = '⚠ Account Verification Required';
-              listEl.innerHTML = `
-                <li>Open your Delta checkpoint link in your browser.</li>
-                <li>Wait 5 seconds, then tap <strong>Continue</strong>.</li>
-                <li>You'll receive a LootLabs link — copy it.</li>
-                <li>Go to the <strong>LootLabs</strong> tab on this site.</li>
-                <li>Paste the link there and hit <strong>RUN</strong> — it will give you the key.</li>
-              `;
-
-              showOut('err', '✗ ' + (provider ? provider + ' verification' : 'Account verification') + ' required — follow the steps below.');
-              const notice = document.getElementById('delta-oauth-notice');
-              notice.classList.add('visible');
-              if (oauthUrl) {
-                const linkDiv = document.getElementById('delta-oauth-link');
-                linkDiv.innerHTML = 'Open this link: <a href="' + escHtml(oauthUrl) + '" target="_blank" style="color:#ffaaaa;text-decoration:underline">' + escHtml(oauthUrl.slice(0, 80)) + (oauthUrl.length > 80 ? '…' : '') + '</a>';
-              }
-            } else {
-              showOut('err', '✗ ' + escHtml(data.error || 'Unknown error'));
-            }
-            btn.disabled = false; btn.textContent = 'RUN';
-            if (typeof turnstile !== 'undefined') turnstile.reset();
-          },
-          onError: (msg) => {
-            deltaStreamAlive = false;
-            showOut('err', '✗ ' + escHtml(msg));
-            btn.disabled = false; btn.textContent = 'RUN';
-            if (typeof turnstile !== 'undefined') turnstile.reset();
-          },
-        }
-      );
-    }
-
-    function showOut(type, html) {
-      const output = document.getElementById('term-output');
-      const outTxt = document.getElementById('out-text');
-      output.classList.add('visible');
-      outTxt.className = 'out-text ' + type;
-      outTxt.innerHTML = html;
-    }
-
-    function copyKey() {
-      if (!currentKey) return;
-      _doCopy(currentKey, document.getElementById('copy-btn'));
-    }
 
     // ── LootLabs solver ──────────────────────────────────────────────────────
     let llAbort = null;
@@ -1554,9 +1247,6 @@
         .replace(/"/g, '&quot;');
     }
 
-    document.getElementById('link-input').addEventListener('keydown', e => {
-      if (e.key === 'Enter') solve();
-    });
     document.getElementById('ll-link-input').addEventListener('keydown', e => {
       if (e.key === 'Enter') solveLootlabs();
     });
