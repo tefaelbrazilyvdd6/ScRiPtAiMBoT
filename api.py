@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# api.py — PlatoRelay solver + LootLabs solver, Flask REST API for Render
+# api.py — PlatoRelay solver + LootLabs solver (shadows_v2), Flask REST API
 
-import time, json, base64, urllib.parse, queue
+import time, json, base64, urllib.parse, queue, math
 import requests
 import urllib3
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
@@ -16,16 +16,20 @@ import re
 import traceback
 import random
 import os
+import gzip
+import zlib
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SOLVE_TOKEN      = os.environ.get("SOLVE_TOKEN", "changeme-set-this-in-render")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "0x4AAAAAAFuUDflleweTZ8jRZuCffo7siyk")
 
+# ─── Delta / PlatoRelay ────────────────────────────────────────────────────────
+
 AUTH_API = "https://auth.platorelay.com/api"
 SERVICE  = 3
 VERSION  = "8.1.2"
-UA       = (
+DELTA_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 "
     "Mobile/15E148 Safari/604.1"
@@ -38,8 +42,6 @@ STEP_THROTTLE_SLEEP = 2.0
 app = Flask(__name__)
 CORS(app)
 
-
-# ─── crypto ────────────────────────────────────────────────────────────────────
 
 def aes_ctr(plain: str, key_bytes, iv_bytes) -> bytes:
     key  = bytearray(key_bytes)
@@ -65,25 +67,20 @@ def build_meta_stream(ticket: str, now_ms: int = None):
         return None, None
     if now_ms is None:
         now_ms = int(time.time() * 1000)
-
     key_meta,   ctr_meta   = ticket[:16],  ticket[16:32]
     key_stream, ctr_stream = ticket[1:17], ticket[17:33]
-
     meta_plain = json.dumps(
-        {"browserInfo": [{"screen": SCREEN, "ua": UA, "time": now_ms}]},
+        {"browserInfo": [{"screen": SCREEN, "ua": DELTA_UA, "time": now_ms}]},
         separators=(",", ":"),
     )
     stream_plain = json.dumps(
         {"events": [{"event": 1, "data": {"time": now_ms}}]},
         separators=(",", ":"),
     )
-
     meta   = aes_ctr(meta_plain,   [ord(c) for c in key_meta],   [ord(c) for c in ctr_meta]).hex()
     stream = aes_ctr(stream_plain, [ord(c) for c in key_stream], [ord(c) for c in ctr_stream]).hex()
     return meta, stream
 
-
-# ─── helpers ───────────────────────────────────────────────────────────────────
 
 def extract_ticket(arg: str) -> str:
     t = arg.strip()
@@ -96,7 +93,7 @@ def extract_ticket(arg: str) -> str:
 
 
 def decode_callback_url(loot_url: str):
-    qs     = urllib.parse.parse_qs(urllib.parse.urlparse(loot_url).query)
+    qs      = urllib.parse.parse_qs(urllib.parse.urlparse(loot_url).query)
     r_param = qs.get("r", [""])[0]
     if not r_param:
         return None
@@ -118,14 +115,9 @@ def extract_ticket_from_callback(cb: str):
     return qs.get("d", [None])[0]
 
 
-# ─── core logic ────────────────────────────────────────────────────────────────
-
 _OAUTH_PATTERNS = [
-    "accounts.google.com",
-    "google.com/o/oauth",
-    "discord.com/oauth2",
-    "discord.gg/oauth",
-    "/oauth",
+    "accounts.google.com", "google.com/o/oauth",
+    "discord.com/oauth2", "discord.gg/oauth", "/oauth",
 ]
 
 def _is_oauth_url(url: str) -> bool:
@@ -139,26 +131,15 @@ def do_step(ticket: str) -> dict:
     meta, stream = build_meta_stream(ticket)
     if meta is None:
         return {"success": False, "error": "ticket too short"}
-    url  = (
-        f"{AUTH_API}/session/step"
-        f"?ticket={urllib.parse.quote(ticket)}&service={SERVICE}"
-    )
+    url  = f"{AUTH_API}/session/step?ticket={urllib.parse.quote(ticket)}&service={SERVICE}"
     body = json.dumps(
         {"captcha": None, "meta": meta, "stream": stream, "resolved": True}
     ).encode()
-    r = requests.put(
-        url,
-        data=body,
-        headers={
-            "User-Agent":       UA,
-            "Content-Type":     "application/json",
-            "Accept":           "application/json, text/plain, */*",
-            "x-client-name":    "platoboost webclient",
-            "x-client-version": VERSION,
-        },
-        timeout=15,
-        verify=False,
-    )
+    r = requests.put(url, data=body, headers={
+        "User-Agent": DELTA_UA, "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "x-client-name": "platoboost webclient", "x-client-version": VERSION,
+    }, timeout=15, verify=False)
     try:
         return r.json()
     except Exception:
@@ -167,22 +148,12 @@ def do_step(ticket: str) -> dict:
 
 def poll_key(ticket: str, tries: int = 10):
     for _ in range(tries):
-        url = (
-            f"{AUTH_API}/session/status"
-            f"?ticket={urllib.parse.quote(ticket)}&service={SERVICE}"
-        )
+        url = f"{AUTH_API}/session/status?ticket={urllib.parse.quote(ticket)}&service={SERVICE}"
         try:
-            r = requests.get(
-                url,
-                headers={
-                    "User-Agent":       UA,
-                    "Accept":           "application/json",
-                    "x-client-name":    "platoboost webclient",
-                    "x-client-version": VERSION,
-                },
-                timeout=10,
-                verify=False,
-            )
+            r = requests.get(url, headers={
+                "User-Agent": DELTA_UA, "Accept": "application/json",
+                "x-client-name": "platoboost webclient", "x-client-version": VERSION,
+            }, timeout=10, verify=False)
             d = r.json()
             k = (d.get("data") or {}).get("key", "")
             if k and k != "KEY_NOT_FOUND":
@@ -193,7 +164,7 @@ def poll_key(ticket: str, tries: int = 10):
     return None
 
 
-def solve(raw_link: str, status_cb=None):
+def solve_delta(raw_link: str, status_cb=None):
     def emit(msg):
         if status_cb:
             status_cb(msg)
@@ -239,10 +210,8 @@ def solve(raw_link: str, status_cb=None):
             return k, None
 
         url = data.get("url", "")
-
         if _is_oauth_url(url):
             return None, "oauth:" + url
-
         if url == "about:blank" or not url:
             emit("polling for key...")
             k = poll_key(ticket)
@@ -251,7 +220,6 @@ def solve(raw_link: str, status_cb=None):
         emit("following redirect chain...")
         cb = decode_callback_url(url)
         nt = extract_ticket_from_callback(cb) if cb else None
-
         if nt and len(nt) > 50:
             emit("got new ticket, continuing...")
             ticket = nt
@@ -282,212 +250,148 @@ def verify_turnstile(token: str) -> bool:
         return False
 
 
+def _stream_worker(fn, q):
+    try:
+        fn()
+    except Exception as e:
+        q.put({"type": "done", "success": False, "error": f"Internal error: {e}"})
+
+
+def _make_sse_response(q, timeout=65):
+    def generate():
+        while True:
+            try:
+                item = q.get(timeout=timeout)
+                yield f"data: {json.dumps(item)}\n\n"
+                if item.get("type") == "done":
+                    break
+            except queue.Empty:
+                yield f"data: {json.dumps({'type': 'status', 'msg': 'still working...'})}\n\n"
+    return Response(stream_with_context(generate()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.post("/solve")
 def route_solve():
     token = request.headers.get("X-Token", "")
     if token != SOLVE_TOKEN:
         return jsonify({"success": False, "error": "forbidden"}), 403
-
     body = request.get_json(silent=True) or {}
-
     captcha_token = body.get("captcha", "")
     if not captcha_token or not verify_turnstile(captcha_token):
         return jsonify({"success": False, "error": "captcha required"}), 403
-
     link = body.get("link", "").strip()
     if not link:
-        link = request.args.get("link", "").strip()
-    if not link:
         return jsonify({"success": False, "error": "param 'link' is required"}), 400
-
-    key, err = solve(link)
+    key, err = solve_delta(link)
     if key:
         return jsonify({"success": True, "key": key}), 200
-
     if err and err.startswith("oauth:"):
-        oauth_url = err[6:]
-        return jsonify({
-            "success":   False,
-            "oauth":     True,
-            "oauth_url": oauth_url,
-            "error":     "Account verification required",
-        }), 200
-
+        return jsonify({"success": False, "oauth": True, "oauth_url": err[6:], "error": "Account verification required"}), 200
     messages = {
-        "ticket too short":    "Invalid link — make sure you copied the full URL from the Delta checkpoint page.",
-        "ticket already used": "This link has already been used or PlatoRelay is looping it. Go back to Delta and get a fresh checkpoint link.",
-        "polling failed":      "Key could not be retrieved. The link may have expired — get a new one from Delta.",
-        "callback decode failed": "Checkpoint step failed. Try again with a fresh link from Delta.",
-        "max rounds reached":  "Solver timed out after 12 rounds. PlatoRelay may be slow — try again in a few seconds.",
+        "ticket too short": "Invalid link — copy the full URL from Delta.",
+        "ticket already used": "Link already used — get a fresh one from Delta.",
+        "polling failed": "Key could not be retrieved — link may be expired.",
+        "callback decode failed": "Checkpoint step failed — try a fresh link.",
+        "max rounds reached": "Solver timed out — try again in a few seconds.",
     }
-    friendly = messages.get(err, "Something went wrong. Grab a fresh link from Delta and try again.")
-    return jsonify({"success": False, "error": friendly}), 500
+    return jsonify({"success": False, "error": messages.get(err, "Something went wrong — grab a fresh link.")}), 500
 
-
-# ── SSE streaming endpoints ────────────────────────────────────────────────────
 
 @app.post("/solve-stream")
 def route_solve_stream():
-    """Delta solver with SSE live status updates."""
     token = request.headers.get("X-Token", "")
     if token != SOLVE_TOKEN:
         return jsonify({"success": False, "error": "forbidden"}), 403
-
     body = request.get_json(silent=True) or {}
-
     captcha_token = body.get("captcha", "")
     if not captcha_token or not verify_turnstile(captcha_token):
         return jsonify({"success": False, "error": "captcha required"}), 403
-
     link = body.get("link", "").strip()
     if not link:
         return jsonify({"success": False, "error": "param 'link' is required"}), 400
 
     q = queue.Queue()
 
-    def status_cb(msg):
-        q.put({"type": "status", "msg": msg})
+    def work():
+        key, err = solve_delta(link, status_cb=lambda m: q.put({"type": "status", "msg": m}))
+        if key:
+            q.put({"type": "done", "success": True, "key": key})
+        elif err and err.startswith("oauth:"):
+            q.put({"type": "done", "success": False, "oauth": True, "oauth_url": err[6:], "error": "Account verification required"})
+        else:
+            messages = {
+                "ticket too short": "Invalid link — copy the full URL from Delta.",
+                "ticket already used": "Link already used — get a fresh one.",
+                "polling failed": "Key could not be retrieved — link may be expired.",
+                "callback decode failed": "Checkpoint step failed — try a fresh link.",
+                "max rounds reached": "Solver timed out — try again.",
+            }
+            q.put({"type": "done", "success": False, "error": messages.get(err, "Something went wrong — grab a fresh link.")})
 
-    def worker():
-        try:
-            key, err = solve(link, status_cb=status_cb)
-            if key:
-                q.put({"type": "done", "success": True, "key": key})
-            elif err and err.startswith("oauth:"):
-                q.put({"type": "done", "success": False, "oauth": True, "oauth_url": err[6:], "error": "Account verification required"})
-            else:
-                messages = {
-                    "ticket too short":    "Invalid link — make sure you copied the full URL.",
-                    "ticket already used": "Link already used — get a fresh one from Delta.",
-                    "polling failed":      "Key could not be retrieved — link may have expired.",
-                    "callback decode failed": "Checkpoint step failed — try a fresh link.",
-                    "max rounds reached":  "Solver timed out — PlatoRelay may be slow, try again.",
-                }
-                q.put({"type": "done", "success": False, "error": messages.get(err, "Something went wrong — grab a fresh link.")})
-        except Exception as e:
-            q.put({"type": "done", "success": False, "error": f"Internal error: {e}"})
-
-    threading.Thread(target=worker, daemon=True).start()
-
-    def generate():
-        while True:
-            try:
-                item = q.get(timeout=50)
-                yield f"data: {json.dumps(item)}\n\n"
-                if item.get("type") == "done":
-                    break
-            except queue.Empty:
-                yield f"data: {json.dumps({'type': 'status', 'msg': 'still working...'})}\n\n"
-
-    return Response(stream_with_context(generate()), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-
-@app.post("/solve-lootlabs-stream")
-def route_solve_lootlabs_stream():
-    """LootLabs solver with SSE live status updates."""
-    token = request.headers.get("X-Token", "")
-    if token != SOLVE_TOKEN:
-        return jsonify({"success": False, "error": "forbidden"}), 403
-
-    body = request.get_json(silent=True) or {}
-
-    captcha_token = body.get("captcha", "")
-    if not captcha_token or not verify_turnstile(captcha_token):
-        return jsonify({"success": False, "error": "captcha required"}), 403
-
-    if not LL_AVAILABLE:
-        return jsonify({
-            "success": False,
-            "error": "LootLabs solver not available — add websocket-client, beautifulsoup4, cryptography to requirements.txt and redeploy",
-        }), 500
-
-    link = body.get("link", "").strip()
-    if not link:
-        return jsonify({"success": False, "error": "param 'link' is required"}), 400
-
-    q = queue.Queue()
-
-    def status_cb(msg):
-        q.put({"type": "status", "msg": msg})
-
-    def worker():
-        try:
-            result = _ll_get_dest(link, status_cb=status_cb)
-            if result and not result.startswith("bypass fail!"):
-                q.put({"type": "done", "success": True, "result": result})
-            else:
-                friendly = result or "bypass failed — try a fresh link"
-                if "Session UUID not found" in friendly:
-                    friendly = "Could not load the LootLabs page. The link may be expired."
-                elif "CDN/TID/KEY not found" in friendly:
-                    friendly = "Page structure changed or link is invalid. Try a fresh link."
-                elif "428" in friendly:
-                    friendly = "Bot detection triggered (428). Try again in a few seconds."
-                elif "WebSocket returned no result" in friendly:
-                    friendly = "WebSocket timed out. LootLabs servers may be slow — try a fresh link."
-                elif "websocket_domain" in friendly:
-                    friendly = "Could not resolve LootLabs WebSocket server. Link may be expired."
-                q.put({"type": "done", "success": False, "error": friendly})
-        except Exception as e:
-            q.put({"type": "done", "success": False, "error": f"Internal error: {e}"})
-
-    threading.Thread(target=worker, daemon=True).start()
-
-    def generate():
-        while True:
-            try:
-                item = q.get(timeout=65)
-                yield f"data: {json.dumps(item)}\n\n"
-                if item.get("type") == "done":
-                    break
-            except queue.Empty:
-                yield f"data: {json.dumps({'type': 'status', 'msg': 'still working...'})}\n\n"
-
-    return Response(stream_with_context(generate()), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    threading.Thread(target=_stream_worker, args=(work, q), daemon=True).start()
+    return _make_sse_response(q, timeout=50)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ─── LootLabs solver ──────────────────────────────────────────────────────────
+# ─── LootLabs solver (shadows_v2 by ajyats) ───────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════════════════
 
 LL_AVAILABLE = False
-
 try:
     from bs4 import BeautifulSoup as _BS4
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
     import websocket as _websocket
-    import zlib as _zlib
-    try:
-        import brotli as _brotli
-    except ImportError:
-        _brotli = None
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
     LL_AVAILABLE = True
 except ImportError as _e:
-    print(f"[LootLabs] Optional deps missing, /solve-lootlabs will be unavailable: {_e}")
+    print(f"[LootLabs] deps missing: {_e}")
+
+LL_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+)
 
 
-def _ll_log(level, msg):
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {level}: {msg}")
+def _ll_make_session(hostname):
+    origin = f"https://{hostname}"
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": LL_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Sec-CH-UA": '"Chromium";v="139", "Not:A-Brand";v="24", "Google Chrome";v="139"',
+        "Sec-CH-UA-Mobile": "?0",
+        "Sec-CH-UA-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Origin": origin,
+        "Referer": f"https://{hostname}",
+    })
+    return s
+
+
+def _ll_wildcard_search(text, pattern):
+    regex = re.escape(pattern).replace(r"\*", "(.*?)")
+    m = re.search(regex, text)
+    return m.group(1) if m else None
 
 
 def _ll_decode_resp(response):
-    content  = response.content
-    encoding = response.headers.get("content-encoding", "").lower()
-    if "br" in encoding and _brotli is not None:
-        content = _brotli.decompress(content)
-    elif "gzip" in encoding:
-        try:
-            content = _zlib.decompress(content, _zlib.MAX_WBITS | 32)
-        except Exception:
-            pass
-    elif "deflate" in encoding:
-        try:
-            content = _zlib.decompress(content)
-        except Exception:
-            pass
-    return content.decode("utf-8", errors="ignore")
+    enc = (response.headers.get("Content-Encoding") or "").lower()
+    content = response.content
+    try:
+        if "gzip" in enc:
+            return gzip.decompress(content).decode("utf-8")
+        if "deflate" in enc:
+            return zlib.decompress(content).decode("utf-8")
+        return content.decode("utf-8", errors="ignore")
+    except Exception:
+        return content.decode("utf-8", errors="ignore")
 
 
 def _ll_cln_url(u):
@@ -500,338 +404,439 @@ def _ll_ext_info(response, pattern):
 
 
 def _ll_get_cdn_tid(content):
-    try:
-        if not content:
-            return None, None, None, {"active": True}
-        soup = _BS4(content, "html.parser")
-        for script in soup.find_all("script"):
-            if script.string and "domain:" in script.string:
-                cd     = re.search(r"cd: ([^']*),", script.string)
-                domain = re.search(r"domain: '([^']*)'", script.string)
-                key    = re.search(r"key: '([^']*)'", script.string)
-                if cd and domain and key:
-                    return domain.group(1), cd.group(1), key.group(1), {"active": False}
-        cdn = _ll_ext_info(content, r"p\['CDN_DOMAIN'\]\s*=\s*'([^']*)'")
-        tid = _ll_ext_info(content, r"p\['TID'\]\s*=\s*(\d+)")
-        key = _ll_ext_info(content, r"p\['KEY'\]\s*=\s*\"([^\"]*)\"")
-        if cdn and tid and key:
-            return cdn, tid, key, {"active": True}
-        return None, None, None, {"active": True}
-    except Exception as e:
-        _ll_log("ERROR", f"_ll_get_cdn_tid: {e}")
-        return None, None, None, {"active": True}
+    if not content:
+        return None, None, None
+    cdn = _ll_ext_info(content, r"p\['CDN_DOMAIN'\]\s*=\s*'([^']*)'")
+    tid = _ll_ext_info(content, r"p\['TID'\]\s*=\s*(\d+)")
+    key = _ll_ext_info(content, r"p\['KEY'\]\s*=\s*\"([^\"]*)\"")
+    if cdn and tid and key:
+        return cdn, tid, key
+    return None, None, None
+
+
+def _ll_get_p_vars(content):
+    pvars = {}
+    for m in re.finditer(r"p\['(\w+)'\]\s*=\s*([^\n;]+)", content):
+        k, v = m.group(1), m.group(2).strip().rstrip(";").strip()
+        if (v.startswith("'") and v.endswith("'")) or (v.startswith('"') and v.endswith('"')):
+            v = v[1:-1]
+        pvars[k] = v
+    return pvars
 
 
 def _ll_decrypt_data(encoded_data, key_length=5):
     try:
-        raw       = base64.b64decode(encoded_data)
-        k, enc    = raw[:key_length], raw[key_length:]
-        decrypted = bytes(b ^ k[i % key_length] for i, b in enumerate(enc))
-        return decrypted.decode("utf-8").strip()
-    except Exception as e:
-        _ll_log("ERROR", f"_ll_decrypt_data: {e}")
+        raw  = base64.b64decode(encoded_data)
+        key, blob = raw[:key_length], raw[key_length:]
+        return bytes(b ^ key[i % key_length] for i, b in enumerate(blob)).decode("utf-8").strip()
+    except Exception:
         return encoded_data.strip()
 
 
+def _ll_ws_header_list(session):
+    ua = session.headers.get("User-Agent", LL_UA)
+    headers = [
+        f"User-Agent: {ua}",
+        "Accept-Language: en-US,en;q=0.9",
+        "Cache-Control: no-cache",
+        "Pragma: no-cache",
+    ]
+    cookie_str = "; ".join(f"{k}={v}" for k, v in session.cookies.items())
+    if cookie_str:
+        headers.append(f"Cookie: {cookie_str}")
+    return headers
+
+
+def _ll_fire(fn, *args, **kwargs):
+    threading.Thread(target=lambda: _ll_silent(fn, *args, **kwargs), daemon=True).start()
+
+
+def _ll_silent(fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+    except Exception:
+        pass
+
+
+def _ll_get(session, url, **kw):
+    if not url:
+        return None
+    if url.startswith("//"):
+        url = "https:" + url
+    kw.setdefault("timeout", 6)
+    kw.setdefault("allow_redirects", True)
+    return session.get(url, **kw)
+
+
+def _ll_beacon_post(session, url):
+    if not url:
+        return
+    if url.startswith("//"):
+        url = "https:" + url
+    session.post(url, data=b"", headers={"Content-Type": "text/plain;charset=UTF-8"}, timeout=4)
+
+
+def _ll_parse_r_payload(message):
+    if not isinstance(message, str) or not message.startswith("r:"):
+        return None
+    payload = "".join(ch for ch in message[2:].strip() if 32 <= ord(ch) <= 126)
+    if payload.startswith("http://") or payload.startswith("https://"):
+        return payload
+    return _ll_decrypt_data(payload)
+
+
+# ── WebGL PoW (the key fix in v2) ─────────────────────────────────────────────
+
+def _ll_fract(r6, n1):
+    n_ = 43758.5453 * math.sin(12.9898 * r6 + 78.233 * n1)
+    return n_ - math.floor(n_)
+
+
+def _ll_solve_webgl_nonce(uuid_str):
+    y6 = int(uuid_str.replace("-", "")[:8], 16) / 4294967295.0
+    for nonce in range(100000):
+        o4 = _ll_fract(y6, nonce)
+        o4 = _ll_fract(o4, nonce + 1)
+        o4 = _ll_fract(o4, nonce + 2)
+        if o4 < 0.001:
+            return nonce
+    return 99999
+
+
 def _ll_transform_uuid(uuid_str):
-    uppercase = [c for c in uuid_str if c.isupper()]
-    key_str   = "".join(uppercase[:4]) if uppercase else "KEY1"
-    xor_res   = bytes(
-        uuid_str.encode()[i] ^ key_str.encode()[i % len(key_str)]
-        for i in range(len(uuid_str))
-    )
-    return base64.b64encode(xor_res).decode("utf-8")
+    m = re.findall(r"[A-Z]", uuid_str)
+    key_str = "".join(m[:4]) if m else "KEY1"
+    uuid_bytes = uuid_str.encode("utf-8")
+    key_bytes  = key_str.encode("utf-8")
+    xored = bytes(uuid_bytes[i] ^ key_bytes[i % len(key_bytes)] for i in range(len(uuid_bytes)))
+    return base64.b64encode(xored).decode("ascii")
 
 
-def _ll_botd_payload(session_uuid):
-    transformed = _ll_transform_uuid(session_uuid)
-    aes_key     = hashlib.sha256(transformed.encode()).digest()
-    iv          = os.urandom(12)
-    timestamp   = int(time.time() * 1000)
+def _ll_make_botd(session_uuid):
+    nonce      = _ll_solve_webgl_nonce(session_uuid)
+    solve_time = int(nonce * random.uniform(1.15, 1.4) + random.randint(20, 80))
     botd = {
         "bot": False,
-        "timestamp": timestamp,
+        "timestamp": int(time.time() * 1000),
         "webGLSolution": {
             "uuid": session_uuid,
-            "nonce": random.randint(1, 3000),
-            "time":  random.randint(100, 5000),
+            "nonce": nonce,
+            "time": solve_time,
         },
     }
-    plaintext  = json.dumps(botd, separators=(",", ":")).encode()
-    ciphertext = _AESGCM(aes_key).encrypt(iv, plaintext, None)
-    botd["encrypted"] = base64.b64encode(iv + ciphertext).decode()
+    aes_key   = hashlib.sha256(_ll_transform_uuid(session_uuid).encode("utf-8")).digest()
+    iv        = os.urandom(12)
+    plaintext = json.dumps(botd, separators=(",", ":")).encode("utf-8")
+    ct        = _AESGCM(aes_key).encrypt(iv, plaintext, None)
+    botd["encrypted"] = base64.b64encode(iv + ct).decode("ascii")
     return json.dumps(botd, separators=(",", ":"))
 
 
-def _ll_parse_params(raw_string):
-    raw_string = raw_string.strip().rstrip(";")
-    raw_string = raw_string.replace("false", "False").replace("true", "True").replace("null", "None")
-    data = ast.literal_eval(raw_string)
-    keys = [
-        "tid", "backup_domain", "backup2_domain", "sixteen_type",
-        "datacloudfront_domain", "EM_List", "max_tasks", "bl_config",
-        "tracking", "websocket_domain", "websocket_backup",
-        "websocket_bckup2", "pixel_enabled", "redirect_domain",
-        "debug_mode", "debug_level", "RGBA_Payloas", "custom_css",
-        "custom_js", "cookie_notice", "theme", "custom_logo",
-        "maintenance_mode", "extra_scripts", "extra_styles",
-        "extra_fonts", "background_color", "custom_html",
-        "security_tend", "tc_domain", "analytics_enabled", "ads_enabled",
-    ]
-    return {k: data[i] for i, k in enumerate(keys) if i < len(data)}
-
-
-def _ll_canserbero(session, server, syncer, urid, p_key, tid,
-                   session_id, isLLBS, task_id, TLeft, APUrl, status_cb=None):
-    def emit(msg):
-        if status_cb:
-            status_cb(msg)
-
-    catnumber = task_id
-    numbers   = [int(urid[-5:]) % 3] + [i for i in range(3) if i != int(urid[-5:]) % 3]
-    emit(f"trying WebSocket servers {numbers}...")
-
+def _ll_get_params(raw_string):
+    text = (raw_string or "").strip()
     try:
-        threading.Thread(
-            target=lambda: session.post(
-                f"https://{numbers[0]}.{server}/st?uid={urid}&cat={catnumber}",
-                timeout=5),
-            daemon=True,
-        ).start()
+        data = json.loads("[" + text[1:-2] + "]")
     except Exception:
-        pass
-    try:
-        if APUrl:
-            threading.Thread(
-                target=lambda: session.get(f"https:{APUrl}", timeout=5),
-                daemon=True,
-            ).start()
-    except Exception:
-        pass
+        if text.endswith(";"):
+            text = text[:-1]
+        text = text.replace("false", "False").replace("true", "True").replace("null", "None")
+        data = ast.literal_eval(text)
+    return {
+        "websocket_domain": data[9],
+        "websocket_backup":  data[10],
+        "websocket_bckup2":  data[11],
+        "tc_domain":         data[29],
+        "allow_unlocker":    data[30],
+    }
 
-    for nmb in numbers:
-        current = f"{nmb}.{server}"
-        for attempt in range(1, 3):
-            ws = None
+
+def _ll_as_bool(v, default=True):
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.lower() in ("1", "true")
+    return bool(v)
+
+
+def _ll_canserbero(session, ws_domain, tasks, p_key, tid, ws_session, origin, done, TLeft=45):
+    if not tasks:
+        return
+    urid    = str(tasks[0].get("urid", ""))
+    cat     = str(tasks[0].get("task_id", 0))
+    try:
+        shard = int(urid[-5:]) % 3
+    except Exception:
+        shard = 0
+
+    ws_url = (
+        f"wss://{shard}.{ws_domain}/c?uid={urid}&cat={cat}"
+        f"&key={p_key}&session_id={ws_session}&is_loot=1&tid={tid}"
+    )
+    ws = None
+    ping_stop = threading.Event()
+    try:
+        ws = _websocket.create_connection(
+            ws_url, timeout=8,
+            header=_ll_ws_header_list(session),
+            origin=origin if str(origin).startswith("http") else f"https://{origin}",
+        )
+        ws.settimeout(0.5)
+
+        def _ping():
+            while not ping_stop.wait(10):
+                try:
+                    ws.send("0")
+                except Exception:
+                    return
+        threading.Thread(target=_ping, daemon=True).start()
+
+        deadline = time.time() + max(int(TLeft or 30), 10)
+        while time.time() < deadline and not done.get("result"):
             try:
-                url = (
-                    f"wss://{current}/c"
-                    f"?uid={urid}&cat={catnumber}&key={p_key}"
-                    f"&session_id={session_id}&is_loot={isLLBS}&tid={tid}"
-                )
-                headers = {
-                    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                       "Chrome/120.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Cache-Control":   "no-cache",
-                    "Pragma":          "no-cache",
-                }
-                cookie_str = "; ".join(f"{k}={v}" for k, v in session.cookies.items())
-                if cookie_str:
-                    headers["Cookie"] = cookie_str
-
-                emit(f"connecting to WS {current} (attempt {attempt})...")
-                ws = _websocket.create_connection(url, timeout=10, header=headers)
-                emit(f"WS connected to {current}, waiting for result...")
-                ws.settimeout(10)
-                ws.send("0")
-
-                max_wait  = 20
-                start     = time.time()
-                last_ping = time.time()
-                elapsed_shown = 0
-
-                while time.time() - start < max_wait:
-                    elapsed = int(time.time() - start)
-                    if elapsed > elapsed_shown + 3:
-                        elapsed_shown = elapsed
-                        emit(f"waiting for WS response... ({elapsed}s)")
-                    try:
-                        ws.settimeout(1)
-                        msg = ws.recv()
-                        if isinstance(msg, bytes):
-                            msg = msg.decode("utf-8")
-                        if isinstance(msg, str) and msg.startswith("r:"):
-                            result = _ll_decrypt_data(msg[2:])
-                            emit("got result from WebSocket!")
-                            ws.close()
-                            return result
-                    except _websocket.WebSocketTimeoutException:
-                        if time.time() - last_ping >= 3:
-                            try:
-                                ws.send("0")
-                                last_ping = time.time()
-                            except Exception:
-                                break
-                    except Exception as e:
-                        emit(f"WS recv issue on {current}, trying next...")
-                        break
-
-                emit(f"no response from {current}, trying next server...")
-
-            except _websocket.WebSocketException as e:
-                emit(f"WS failed on {current} (attempt {attempt})")
-            except Exception as e:
-                emit(f"WS error on {current} (attempt {attempt})")
-            finally:
-                if ws:
-                    try:
-                        ws.close()
-                    except Exception:
-                        pass
-            if attempt == 1:
-                time.sleep(0.5)
-
-    emit("all WebSocket servers exhausted")
-    return None
+                message = ws.recv()
+            except _websocket.WebSocketTimeoutException:
+                continue
+            except Exception:
+                break
+            if isinstance(message, bytes):
+                try:
+                    message = message.decode("utf-8")
+                except Exception:
+                    continue
+            if message == "Refresh Page":
+                break
+            result = _ll_parse_r_payload(message)
+            if result:
+                done["result"] = result
+                return
+    except Exception:
+        pass
+    finally:
+        ping_stop.set()
+        if ws:
+            try:
+                ws.close()
+            except Exception:
+                pass
 
 
-def _ll_get_dest(url, status_cb=None):
+def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
+    """
+    captcha_token_cb: callable(cap_url) -> str  (user-supplied turnstile token)
+    If not provided and a captcha task is detected, we skip verification
+    (which will likely cause WS timeout, same as before).
+    """
     def emit(msg):
         if status_cb:
             status_cb(msg)
 
     hostname = urllib.parse.urlparse(url).hostname
+    session  = None
+    t0       = time.perf_counter()
+
+    def taken():
+        return f"{time.perf_counter() - t0:.2f}s"
+
     try:
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                               "AppleWebKit/537.36 (KHTML, like Gecko) "
-                               "Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        })
+        emit(f"loading LootLabs page ({hostname})...")
+        session = _ll_make_session(hostname)
+        origin  = f"https://{hostname}"
 
-        emit("loading LootLabs page...")
-        initial   = session.get(url, timeout=15)
-        page_text = _ll_decode_resp(initial)
+        initial   = session.get(url, headers={"Origin": origin}, timeout=15)
+        sess_uuid = _ll_wildcard_search(initial.text, "<script>document.session = '*'</script>")
+        if not sess_uuid:
+            return f"bypass fail! Session UUID not found ({taken()})"
+        emit(f"session UUID: {sess_uuid[:8]}...")
 
-        emit("extracting session UUID...")
-        m = re.search(r"document\.session\s*=\s*['\"]([^'\"]+)['\"]", page_text)
-        if not m:
-            return "bypass fail! Session UUID not found"
-        sess_uuid = m.group(1)
+        _ll_fire(
+            session.post,
+            f"{origin}/verify",
+            data=json.dumps({"session": sess_uuid}, separators=(",", ":")),
+            headers={"Content-Type": "text/plain;charset=UTF-8", "Origin": origin},
+            timeout=6,
+        )
 
         emit("extracting CDN/TID/KEY...")
-        cdn, tid, key, gis = _ll_get_cdn_tid(page_text)
+        cdn, tid, key = _ll_get_cdn_tid(initial.text)
         if not all([cdn, tid, key]):
-            return "bypass fail! CDN/TID/KEY not found"
+            return f"bypass fail! CDN/TID/KEY not found ({taken()})"
 
-        isLLBS     = gis.get("active", False)
-        isLLBS_str = "1" if isLLBS else "0"
+        pvars = _ll_get_p_vars(initial.text)
 
         emit("fetching CDN parameters...")
-        params_resp = session.get(
-            f"https://{cdn}/?tid={tid}&params_only=1", timeout=15)
-        try:
-            params = _ll_parse_params(_ll_decode_resp(params_resp))
-        except Exception as e:
-            return f"bypass fail! params parse error: {e}"
-
-        SYNCER = params.get("tc_domain")
-        if not SYNCER:
-            return "bypass fail! tc_domain not found"
-
-        if isLLBS and sess_uuid:
-            try:
-                threading.Thread(
-                    target=lambda: session.post(
-                        f"https://{hostname}/verify",
-                        json={"session": sess_uuid},
-                        timeout=10,
-                        headers={"Referer": url},
-                    ),
-                    daemon=True,
-                ).start()
-            except Exception:
-                pass
-
-        mess_session = str(random.randint(100000000000000000, 999999999999999999))
-        emit("generating BotD payload...")
-        botd_data    = _ll_botd_payload(sess_uuid)
-
-        qs   = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-        Pb   = qs.get("puid", [None])[0]
-        iP   = bool(Pb)
-
-        TC_body = {
-            "tid": int(tid), "bl": [10], "session": mess_session,
-            "max_tasks": 1, "design_id": 139, "cur_url": str(url),
-            "doc_ref": "", "num_of_tasks": "", "is_loot": isLLBS,
-            "rkey": key,
-            "cookie_id": str(random.randint(100000000, 999999999)),
-            "botd": botd_data, "botds": sess_uuid, "offer": "0",
-            "tier_id": 4, "taboola_user_sync": "", "fid": -1,
-            "clid": str(uuid.uuid4()),
-            "additional_info": {}, "allow_unlocker": True,
-            "desktop_design": 0, "show_unlocker": True,
-            "test_unlocker_app": -1, "unlocker_only": 0,
-        }
-        if iP:
-            TC_body["puid"] = iP
-
-        emit("sending task request to /tc...")
-        rawr = session.post(
-            f"https://{SYNCER}/tc",
-            json=TC_body,
-            cookies={"ci": str(random.randint(1000000000000000, 9999999999999999))},
-            timeout=20,
+        content_resp = session.get(
+            f"https://{cdn}/?tid={tid}&params_only=1",
+            headers={"Origin": origin}, timeout=10,
         )
-        emit(f"/tc responded: {rawr.status_code}")
+        params = _ll_get_params(_ll_decode_resp(content_resp))
 
-        if rawr.status_code == 428:
-            return "bypass fail! 428 — BotD rejected"
-        if rawr.status_code != 200:
-            return f"bypass fail! /tc status {rawr.status_code}"
+        SYNCER = params.get("tc_domain") or "nerventualken.com"
+
+        mess_session = str(random.randint(1, 9)) + "".join(
+            str(random.randint(0, 9)) for _ in range(16)
+        ) + str(random.randint(0, 9))
 
         try:
-            TCP = rawr.json()
-            if isinstance(TCP, list):
-                if not TCP:
-                    return "bypass fail! Empty /tc response"
-                TCP = TCP[0]
+            test_unl = int(pvars.get("TEST_UNLOCKER_APP", -1))
+        except Exception:
+            test_unl = -1
+        try:
+            unlocker_only = int(pvars.get("UNLOCKER_ONLY", "0"))
+        except Exception:
+            unlocker_only = 0
 
-            task_id = TCP.get("task_id", 0)
-            urid    = TCP.get("urid")
-            TLeft   = TCP.get("auto_complete_seconds")
-            APUrl   = TCP.get("action_pixel_url", "")
+        emit("solving WebGL proof-of-work...")
+        botd_data = _ll_make_botd(sess_uuid)
 
-            if not urid:
-                return "bypass fail! No urid in /tc response"
+        TCData = {
+            "tid":              int(tid),
+            "bl":               [18, 2, 33, 7, 21, 49],
+            "session":          mess_session,
+            "max_tasks":        1,
+            "design_id":        135,
+            "cur_url":          url,
+            "doc_ref":          "",
+            "tier_id":          "0",
+            "num_of_tasks":     "1",
+            "is_loot":          True,
+            "rkey":             key,
+            "cookie_id":        str(random.randint(100000000, 999999999)),
+            "botd":             botd_data,
+            "botds":            sess_uuid,
+            "offer":            pvars.get("OFFER", "0"),
+            "ver":              pvars.get("WIDGET_VERSION") or "v1",
+            "tasks_timer":      pvars.get("TASKS_TIMER") or "-1",
+            "test_unlocker_app": test_unl,
+            "allow_unlocker":   _ll_as_bool(params.get("allow_unlocker"), True),
+            "show_unlocker":    _ll_as_bool(pvars.get("SHOW_UNLOCKER"), True),
+            "desktop_design":   1 if pvars.get("DESKTOP_DESIGN") in ("1", "true") else 0,
+            "unlocker_only":    unlocker_only,
+            "additional_info":  {},
+            "taboola_user_sync": "0",
+        }
 
-            try:
-                threading.Thread(
-                    target=lambda: requests.get(
-                        f"https://enaightdecipie.com/?event=task_clicked"
-                        f"&session_id={task_id}&info=1",
-                        timeout=5,
-                    ),
-                    daemon=True,
-                ).start()
-            except Exception:
-                pass
+        emit("posting task config to sync server...")
+        saved_headers = dict(session.headers)
+        try:
+            session.headers.clear()
+            session.headers.update({
+                "User-Agent":     saved_headers.get("User-Agent", ""),
+                "Accept":         "*/*",
+                "Accept-Language": saved_headers.get("Accept-Language", "en-US,en;q=0.9"),
+                "Content-Type":   "application/json",
+                "Origin":         origin,
+                "Referer":        f"{origin}/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
+            })
+            rawr = session.post(f"https://{SYNCER}/tc", json=TCData, timeout=15)
+        finally:
+            session.headers.clear()
+            session.headers.update(saved_headers)
 
-            daserver = params.get("websocket_domain")
-            if not daserver:
-                return "bypass fail! No websocket_domain"
+        emit(f"/tc responded: {rawr.status_code}")
+        if rawr.status_code != 200:
+            return f"bypass fail! TC status {rawr.status_code} ({taken()})"
 
-            emit(f"got task ID {task_id}, opening WebSocket...")
-            result = _ll_canserbero(
-                session, daserver, SYNCER, urid, key,
-                tid, mess_session, isLLBS_str, task_id, TLeft, APUrl,
-                status_cb=status_cb,
-            )
-            if result:
-                return result
-            return "bypass fail! WebSocket returned no result"
+        TCP      = json.loads(_ll_decode_resp(rawr))
+        TCP_list = TCP if isinstance(TCP, list) else [TCP]
+        if not TCP_list:
+            return f"bypass fail! Empty TC response ({taken()})"
+        TCP = TCP_list[0]
 
-        except Exception as e:
-            _ll_log("ERROR", traceback.format_exc())
-            return f"bypass fail! /tc parse error: {e}"
+        # detect captcha task (task_id 41)
+        captcha_task = next(
+            (i for i in TCP_list
+             if i.get("title") == "Confirm you are human" or str(i.get("task_id")) == "41"),
+            None,
+        )
+        bind    = captcha_task or TCP
+        urid    = bind.get("urid")
+        task_id = bind.get("task_id", 0)
+        if not urid:
+            return f"bypass fail! No urid ({taken()})"
+
+        emit(f"got task (urid={str(urid)[-6:]}, id={task_id})")
+
+        ws_session = bind.get("session_id") or "undefined"
+        ws_domain  = params.get("websocket_domain") or "onsultingco.com"
+        try:
+            shard = int(str(urid)[-5:]) % 3
+        except Exception:
+            shard = 0
+        shard_host = f"{shard}.{ws_domain}"
+
+        for idx, item in enumerate(TCP_list):
+            _ll_fire(_ll_get, session,
+                f"https://enaightdecipie.com/?event=task_clicked"
+                f"&session_id={item.get('task_id')}&info={idx + 1}")
+
+        done = {"result": None}
+        emit("opening WebSocket connection...")
+        ws_thread = threading.Thread(
+            target=_ll_canserbero,
+            args=(session, ws_domain, [bind], key, tid, ws_session, origin, done),
+            kwargs={"TLeft": 40},
+            daemon=True,
+        )
+        ws_thread.start()
+
+        _ll_fire(_ll_beacon_post, session, f"https://{shard_host}/st?uid={urid}&cat={task_id}")
+        ap = bind.get("action_pixel_url") or TCP.get("action_pixel_url")
+        if ap:
+            _ll_fire(_ll_get, session, ap)
+        _ll_fire(_ll_get, session,
+            f"https://{SYNCER}/td?ac=auto_complete&urid={urid}&cat={task_id}&tid={tid}")
+
+        # ── captcha step ──────────────────────────────────────────────────────
+        if captcha_task:
+            cap_url = captcha_task.get("ad_url") or f"https://{SYNCER}/captcha?urid={urid}"
+            if not str(cap_url).startswith("http"):
+                cap_url = f"https://{SYNCER}/captcha?urid={urid}"
+
+            if captcha_token_cb:
+                emit(f"captcha required — waiting for user to solve ({cap_url})...")
+                try:
+                    token = captcha_token_cb(cap_url)
+                    if token:
+                        emit("captcha token received, verifying...")
+                        vrf = session.post(
+                            f"https://{SYNCER}/captcha/verify",
+                            json={"urid": str(urid), "token": token},
+                            headers={
+                                "Origin":       f"https://{SYNCER}",
+                                "Referer":      cap_url,
+                                "Content-Type": "application/json",
+                            },
+                            timeout=10,
+                        )
+                        emit(f"captcha verify: {vrf.status_code}")
+                        _ll_fire(_ll_get, session,
+                            f"https://{SYNCER}/td?ac=captcha&urid={urid}&=&cat={task_id}&tid={tid}")
+                except Exception as e:
+                    emit(f"captcha step error: {e}")
+            else:
+                emit("captcha task detected but no solver provided — result may fail")
+
+        ws_thread.join(timeout=25)
+
+        if done["result"]:
+            emit(f"bypassed! ({taken()})")
+            return done["result"]
+
+        return f"bypass fail! WebSocket returned no result ({taken()})"
 
     except Exception as e:
-        _ll_log("ERROR", traceback.format_exc())
-        return f"bypass fail! {e}"
+        return f"bypass fail! {e} ({taken()})"
+    finally:
+        if session:
+            try:
+                session.close()
+            except Exception:
+                pass
 
 
 @app.post("/solve-lootlabs")
@@ -839,41 +844,63 @@ def route_solve_lootlabs():
     token = request.headers.get("X-Token", "")
     if token != SOLVE_TOKEN:
         return jsonify({"success": False, "error": "forbidden"}), 403
-
     body = request.get_json(silent=True) or {}
-
     captcha_token = body.get("captcha", "")
     if not captcha_token or not verify_turnstile(captcha_token):
         return jsonify({"success": False, "error": "captcha required"}), 403
-
     if not LL_AVAILABLE:
-        return jsonify({
-            "success": False,
-            "error": "LootLabs solver not available — add websocket-client, beautifulsoup4, cryptography to requirements.txt and redeploy",
-        }), 500
+        return jsonify({"success": False, "error": "LootLabs deps missing — add websocket-client, beautifulsoup4, cryptography to requirements.txt"}), 500
+    link = body.get("link", "").strip()
+    if not link:
+        return jsonify({"success": False, "error": "param 'link' is required"}), 400
+    result = _ll_get_dest(link)
+    if result and not result.startswith("bypass fail!"):
+        return jsonify({"success": True, "result": result}), 200
+    friendly = _ll_friendly_error(result)
+    return jsonify({"success": False, "error": friendly}), 500
 
+
+@app.post("/solve-lootlabs-stream")
+def route_solve_lootlabs_stream():
+    token = request.headers.get("X-Token", "")
+    if token != SOLVE_TOKEN:
+        return jsonify({"success": False, "error": "forbidden"}), 403
+    body = request.get_json(silent=True) or {}
+    captcha_token = body.get("captcha", "")
+    if not captcha_token or not verify_turnstile(captcha_token):
+        return jsonify({"success": False, "error": "captcha required"}), 403
+    if not LL_AVAILABLE:
+        return jsonify({"success": False, "error": "LootLabs deps missing"}), 500
     link = body.get("link", "").strip()
     if not link:
         return jsonify({"success": False, "error": "param 'link' is required"}), 400
 
-    result = _ll_get_dest(link)
+    q = queue.Queue()
 
-    if result and not result.startswith("bypass fail!"):
-        return jsonify({"success": True, "result": result}), 200
+    def work():
+        result = _ll_get_dest(link, status_cb=lambda m: q.put({"type": "status", "msg": m}))
+        if result and not result.startswith("bypass fail!"):
+            q.put({"type": "done", "success": True, "result": result})
+        else:
+            q.put({"type": "done", "success": False, "error": _ll_friendly_error(result)})
 
+    threading.Thread(target=_stream_worker, args=(work, q), daemon=True).start()
+    return _make_sse_response(q, timeout=65)
+
+
+def _ll_friendly_error(result):
     friendly = result or "bypass failed — try a fresh link"
     if "Session UUID not found" in friendly:
-        friendly = "Could not load the LootLabs page. The link may be expired — grab a fresh one."
-    elif "CDN/TID/KEY not found" in friendly:
-        friendly = "Page structure changed or link is invalid. Try a fresh link."
-    elif "428" in friendly:
-        friendly = "Bot detection triggered (428). The server rejected the request — try again in a few seconds."
-    elif "WebSocket returned no result" in friendly:
-        friendly = "WebSocket timed out. LootLabs servers may be slow — try again with a fresh link."
-    elif "websocket_domain" in friendly:
-        friendly = "Could not resolve LootLabs WebSocket server. Link may be expired."
-
-    return jsonify({"success": False, "error": friendly}), 500
+        return "Could not load the LootLabs page — link may be expired."
+    if "CDN/TID/KEY not found" in friendly:
+        return "Page structure changed or link is invalid — try a fresh link."
+    if "428" in friendly:
+        return "Bot detection triggered (428) — try again in a few seconds."
+    if "WebSocket returned no result" in friendly:
+        return "WebSocket timed out — LootLabs servers may be slow, try a fresh link."
+    if "websocket_domain" in friendly:
+        return "Could not resolve WebSocket server — link may be expired."
+    return friendly
 
 
 # ─── entrypoint ────────────────────────────────────────────────────────────────
