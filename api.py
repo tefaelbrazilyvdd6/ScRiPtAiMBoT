@@ -877,15 +877,67 @@ def route_solve_lootlabs_stream():
 
     q = queue.Queue()
 
+    # Each stream session gets a unique ID so the frontend can POST the
+    # LootLabs captcha token back to the right waiting thread.
+    session_id = str(uuid.uuid4())
+    captcha_event   = threading.Event()
+    captcha_result  = {"token": None}
+
+    # Store the event/result so /ll-captcha-submit can find it
+    _ll_captcha_sessions[session_id] = (captcha_event, captcha_result)
+
+    def captcha_token_cb(cap_url):
+        """Called by _ll_get_dest when LootLabs needs a captcha solved."""
+        # Tell the frontend: show this captcha URL to the user
+        q.put({"type": "captcha_needed", "session_id": session_id, "cap_url": cap_url})
+        # Block until the frontend POSTs the solved token (or 90s timeout)
+        captcha_event.wait(timeout=90)
+        return captcha_result.get("token")
+
     def work():
-        result = _ll_get_dest(link, status_cb=lambda m: q.put({"type": "status", "msg": m}))
-        if result and not result.startswith("bypass fail!"):
-            q.put({"type": "done", "success": True, "result": result})
-        else:
-            q.put({"type": "done", "success": False, "error": _ll_friendly_error(result)})
+        try:
+            result = _ll_get_dest(
+                link,
+                status_cb=lambda m: q.put({"type": "status", "msg": m}),
+                captcha_token_cb=captcha_token_cb,
+            )
+            if result and not result.startswith("bypass fail!"):
+                q.put({"type": "done", "success": True, "result": result})
+            else:
+                q.put({"type": "done", "success": False, "error": _ll_friendly_error(result)})
+        finally:
+            _ll_captcha_sessions.pop(session_id, None)
 
     threading.Thread(target=_stream_worker, args=(work, q), daemon=True).start()
-    return _make_sse_response(q, timeout=65)
+
+    # Pass the session_id to the frontend as the first SSE event
+    q.put({"type": "session", "session_id": session_id})
+
+    return _make_sse_response(q, timeout=120)
+
+
+# Store in-flight LootLabs captcha sessions: session_id -> (Event, result_dict)
+_ll_captcha_sessions: dict = {}
+
+
+@app.post("/ll-captcha-submit")
+def route_ll_captcha_submit():
+    """Frontend POSTs the user-solved LootLabs captcha token here."""
+    token = request.headers.get("X-Token", "")
+    if token != SOLVE_TOKEN:
+        return jsonify({"success": False, "error": "forbidden"}), 403
+    body = request.get_json(silent=True) or {}
+    session_id    = body.get("session_id", "")
+    captcha_token = body.get("captcha_token", "")
+    if not session_id or not captcha_token:
+        return jsonify({"success": False, "error": "missing fields"}), 400
+    entry = _ll_captcha_sessions.get(session_id)
+    if not entry:
+        return jsonify({"success": False, "error": "session not found or expired"}), 404
+    event, result = entry
+    result["token"] = captcha_token
+    event.set()
+    return jsonify({"success": True}), 200
 
 
 def _ll_friendly_error(result):
