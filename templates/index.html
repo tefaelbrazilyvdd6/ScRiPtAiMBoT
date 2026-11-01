@@ -1193,15 +1193,15 @@
               showOut('ok', '✓ Your key is ready: ' + escHtml(data.key));
               cpyBtn.classList.add('visible');
             } else if (data.oauth) {
-              showOut('err', '✗ This link requires extra authorization — try getting a fresh link from Delta.');
+              showOut('err', '✗ OAuth required — ' + escHtml(data.error || 'account verification needed'));
             } else {
-              showOut('err', '✗ Something went wrong. Please try again with a fresh link.');
+              showOut('err', '✗ ' + escHtml(data.error || 'Unknown error'));
             }
             btn.disabled = false; btn.textContent = 'RUN';
             if (typeof turnstile !== 'undefined') turnstile.reset();
           },
-          onError: () => {
-            showOut('err', '✗ Could not reach the bypass service. Check your connection and try again.');
+          onError: (msg) => {
+            showOut('err', '✗ ' + escHtml(msg));
             btn.disabled = false; btn.textContent = 'RUN';
             if (typeof turnstile !== 'undefined') turnstile.reset();
           },
@@ -1351,14 +1351,14 @@
               showLLOut('ok', '✓ Done! Your link is ready: ' + escHtml(data.result));
               cpyBtn.classList.add('visible');
             } else {
-              showLLOut('err', '✗ Something went wrong. Please try again with a fresh link.');
+              showLLOut('err', '✗ ' + escHtml(data.error || 'Unknown error'));
             }
             btn.disabled = false; btn.textContent = 'RUN';
             if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
           },
-          onError: () => {
+          onError: (msg) => {
             document.getElementById('ll-mid-captcha').style.display = 'none';
-            showLLOut('err', '✗ Could not reach the bypass service. Check your connection and try again.');
+            showLLOut('err', '✗ ' + escHtml(msg));
             btn.disabled = false; btn.textContent = 'RUN';
             if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
           },
