@@ -890,8 +890,6 @@ def route_solve_lootlabs_stream():
         """Called by _ll_get_dest when LootLabs needs a captcha solved."""
         # Tell the frontend: show this captcha URL to the user
         q.put({"type": "captcha_needed", "session_id": session_id, "cap_url": cap_url})
-        # note: cap_url is sent so the frontend can fetch /ll-captcha-sitekey
-        # and render Turnstile with the correct LootLabs sitekey
         # Block until the frontend POSTs the solved token (or 90s timeout)
         captcha_event.wait(timeout=90)
         return captcha_result.get("token")
@@ -940,30 +938,6 @@ def route_ll_captcha_submit():
     result["token"] = captcha_token
     event.set()
     return jsonify({"success": True}), 200
-
-
-@app.post("/ll-captcha-sitekey")
-def route_ll_captcha_sitekey():
-    """Fetch the LootLabs captcha page and return its Turnstile sitekey."""
-    token = request.headers.get("X-Token", "")
-    if token != SOLVE_TOKEN:
-        return jsonify({"success": False, "error": "forbidden"}), 403
-    body = request.get_json(silent=True) or {}
-    cap_url = body.get("cap_url", "").strip()
-    if not cap_url or not cap_url.startswith("http"):
-        return jsonify({"success": False, "error": "invalid cap_url"}), 400
-    try:
-        r = requests.get(cap_url, headers={"User-Agent": LL_UA}, timeout=10, verify=False)
-        html = r.text
-        # look for sitekey in data-sitekey attribute or turnstile.render({sitekey:...})
-        m = re.search(r'data-sitekey=["\']([0-9a-zA-Z_\-]+)["\']', html)
-        if not m:
-            m = re.search(r'sitekey["\']?\s*:\s*["\']([0-9a-zA-Z_\-]+)["\']', html)
-        if m:
-            return jsonify({"success": True, "sitekey": m.group(1)}), 200
-        return jsonify({"success": False, "error": "sitekey not found in captcha page"}), 500
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
 
 
 def _ll_friendly_error(result):
