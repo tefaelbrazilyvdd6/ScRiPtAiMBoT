@@ -839,15 +839,15 @@
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
             </div>
             <div class="verify-title">One More Check</div>
-            <div class="verify-sub">LootLabs requires you to confirm you're human. Solve the box below to continue.</div>
-            <div class="verify-turnstile" id="ll-mid-captcha-container" style="min-height:68px;display:flex;align-items:center;justify-content:center;">
-              <!-- Turnstile rendered here by JS -->
+            <div class="verify-sub">LootLabs requires a quick human check. Complete the verification below, then click Continue.</div>
+            <div id="ll-mid-captcha-container" style="width:100%;border-radius:8px;overflow:hidden;background:#111;min-height:120px;">
+              <!-- iframe injected by JS -->
             </div>
             <div class="verify-status" id="ll-mid-captcha-status">
               <div class="verify-spinner"></div>
-              <span>Waiting for you to solve the captcha...</span>
+              <span>Complete the verification above, then click Continue.</span>
             </div>
-            <button class="btn-run verify-continue" id="ll-mid-captcha-btn" onclick="submitLLMidCaptcha()" disabled>Continue Bypass</button>
+            <button class="btn-run verify-continue" id="ll-mid-captcha-btn" onclick="submitLLMidCaptcha()">Continue Bypass</button>
           </div>
         </div>
 
@@ -1006,23 +1006,23 @@
     }
 
     async function submitLLMidCaptcha() {
-      if (!llMidCaptchaToken || !llSessionId) return;
+      if (!llSessionId) return;
       const btn = document.getElementById('ll-mid-captcha-btn');
       btn.disabled = true;
       btn.textContent = 'Resuming...';
 
       try {
+        // Send iframe_done — captcha was solved directly on LootLabs' domain via iframe,
+        // no token relay needed. Backend skips /captcha/verify and lets WS finish.
         await fetch('/ll-captcha-submit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Token': API_TOKEN },
-          body: JSON.stringify({ session_id: llSessionId, captcha_token: llMidCaptchaToken }),
+          body: JSON.stringify({ session_id: llSessionId, captcha_token: 'iframe_done' }),
         });
       } catch(e) {}
 
-      // Hide mid-captcha card, resume status display
       document.getElementById('ll-mid-captcha').style.display = 'none';
-      showLLOut('wait', 'Captcha submitted — resuming bypass...<span class="cursor"></span>');
-      llMidCaptchaToken = '';
+      showLLOut('wait', 'Verification done — resuming bypass...<span class="cursor"></span>');
     }
 
     function cancelVerify(tab) {
@@ -1326,20 +1326,14 @@
               status.innerHTML = '<div class="verify-spinner"></div><span>Loading verification...</span>';
               const container = document.getElementById('ll-mid-captcha-container');
               container.innerHTML = '';
-              // LootLabs uses their own Turnstile sitekey (nerventualken.com)
-              const LL_CAPTCHA_SITEKEY = '0x4AAAAAAEO6tvECK-X4VCvq';
-              status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for you to solve the captcha...</span>';
-              if (typeof turnstile !== 'undefined') {
-                if (llMidWidgetId !== null) {
-                  try { turnstile.remove(llMidWidgetId); } catch(e) {}
-                }
-                llMidWidgetId = turnstile.render(container, {
-                  sitekey: LL_CAPTCHA_SITEKEY,
-                  theme: 'dark',
-                  callback: onLLMidCaptchaSolved,
-                  'expired-callback': onLLMidCaptchaExpired,
-                });
-              }
+              // Inject LootLabs captcha page as iframe — runs on their domain so sitekey works
+              const capUrl = raw.cap_url || `https://nerventualken.com/captcha?urid=unknown`;
+              const iframe = document.createElement('iframe');
+              iframe.src = capUrl;
+              iframe.style.cssText = 'width:100%;height:200px;border:none;border-radius:8px;';
+              iframe.allow = 'same-origin';
+              container.appendChild(iframe);
+              status.innerHTML = '<div class="verify-spinner"></div><span>Complete the check above, then click Continue.</span>';
               return;
             }
             nextLLStep();
