@@ -640,14 +640,37 @@
       showOut('wait', 'running solver — please wait (10–30s)<span class="cursor"></span>');
 
       try {
+        const controller = new AbortController();
+        const timeoutId  = setTimeout(() => controller.abort(), 45000); // 45s hard cap
+
         const res = await fetch(API_URL, {
           method: 'POST',
+          signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
             'X-Token': API_TOKEN,
           },
           body: JSON.stringify({ link, captcha: captchaToken }),
         });
+        clearTimeout(timeoutId);
+
+        // surface non-JSON / auth errors before parsing
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          showOut('err', 'error: server returned HTTP ' + res.status + ' (non-JSON) — SOLVE_TOKEN env var may not match the template value');
+          btn.disabled = false;
+          btn.textContent = 'RUN';
+          turnstile.reset();
+          return;
+        }
+
+        if (res.status === 403) {
+          showOut('err', 'error: 403 forbidden — SOLVE_TOKEN in Render env does not match the token baked into this page. Redeploy after syncing them.');
+          btn.disabled = false;
+          btn.textContent = 'RUN';
+          turnstile.reset();
+          return;
+        }
 
         const data = await res.json();
 
@@ -659,7 +682,11 @@
           showOut('err', 'error: ' + escHtml(data.error || 'unknown — grab a fresh link and retry'));
         }
       } catch (e) {
-        showOut('err', 'error: connection failed — check your internet and retry');
+        if (e.name === 'AbortError') {
+          showOut('err', 'error: request timed out after 45s — PlatoRelay may be down, grab a fresh link and retry');
+        } else {
+          showOut('err', 'error: connection failed — ' + escHtml(e.message || 'check your internet and retry'));
+        }
       }
 
       btn.disabled = false;
