@@ -729,7 +729,6 @@
   <script>
     const API_TOKEN = '{{ solve_token }}';
 
-    // ── captcha token tracking ───────────────────────────────────────────────
     let captchaToken  = '';
     let llWidgetId    = null;
     let currentKey    = '';
@@ -744,7 +743,6 @@
       const llPanel    = document.getElementById('tab-ll-panel');
       const deltaBtn   = document.getElementById('tab-delta-btn');
       const llBtn      = document.getElementById('tab-ll-btn');
-
       if (tab === 'delta') {
         deltaPanel.style.display = '';
         llPanel.style.display    = 'none';
@@ -755,7 +753,6 @@
         llPanel.style.display    = '';
         deltaBtn.classList.remove('active');
         llBtn.classList.add('active');
-        // render LootLabs Turnstile on first switch
         if (!llWidgetId && typeof turnstile !== 'undefined') {
           llWidgetId = turnstile.render('#ll-turnstile-container', {
             sitekey: '0x4AAAAAAFuUDcKH0b9gZL9E',
@@ -767,75 +764,112 @@
       }
     }
 
+    // ── SSE helpers ──────────────────────────────────────────────────────────
+    function _sseStream(endpoint, payload, {
+      onStatus,  // fn(msg)
+      onDone,    // fn(data)
+      onError,   // fn(msg)
+      signal,
+    }) {
+      fetch(endpoint, {
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Token': API_TOKEN,
+        },
+        body: JSON.stringify(payload),
+      }).then(res => {
+        if (!res.ok) {
+          return res.json().catch(() => ({})).then(d => {
+            onError('error: server ' + res.status + ' — ' + (d.error || 'check logs'));
+          });
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        function read() {
+          reader.read().then(({ done, value }) => {
+            if (done) return;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop();
+            for (const part of parts) {
+              const line = part.trim();
+              if (!line.startsWith('data:')) continue;
+              try {
+                const d = JSON.parse(line.slice(5).trim());
+                if (d.type === 'status') onStatus(d.msg);
+                else if (d.type === 'done') { onDone(d); return; }
+              } catch(e) {}
+            }
+            read();
+          }).catch(e => {
+            if (e.name !== 'AbortError') onError('error: stream interrupted — ' + e.message);
+          });
+        }
+        read();
+      }).catch(e => {
+        if (e.name !== 'AbortError') onError('error: connection failed — ' + e.message);
+      });
+    }
+
     // ── Delta solver ─────────────────────────────────────────────────────────
+    let deltaAbort = null;
+
     async function solve() {
       const input  = document.getElementById('link-input');
       const btn    = document.getElementById('solve-btn');
-      const output = document.getElementById('term-output');
-      const outTxt = document.getElementById('out-text');
       const cpyBtn = document.getElementById('copy-btn');
       const link   = input.value.trim();
 
-      if (!link) {
-        showOut('err', 'error: no input — paste a checkpoint link first');
-        return;
-      }
+      if (!link) { showOut('err', 'error: no input — paste a checkpoint link first'); return; }
+      if (!captchaToken) { showOut('err', 'error: captcha not completed — check the box above'); return; }
 
-      if (!captchaToken) {
-        showOut('err', 'error: captcha not completed — check the box above');
-        return;
-      }
+      if (deltaAbort) deltaAbort.abort();
+      deltaAbort = new AbortController();
 
       btn.disabled = true;
       btn.textContent = '...';
       cpyBtn.classList.remove('visible');
       currentKey = '';
-      showOut('wait', 'running solver — please wait (10–30s)<span class="cursor"></span>');
+      showOut('wait', 'initialising solver...<span class="cursor"></span>');
 
-      try {
-        const controller = new AbortController();
-        const timeoutId  = setTimeout(() => controller.abort(), 45000);
-
-        const res = await fetch('/solve', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Token': API_TOKEN,
-          },
-          body: JSON.stringify({ link, captcha: captchaToken }),
-        });
-        clearTimeout(timeoutId);
-
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          showOut('err', 'error: server returned HTTP ' + res.status + ' (non-JSON) — SOLVE_TOKEN env var may not match the template value');
-          btn.disabled = false; btn.textContent = 'RUN'; turnstile.reset(); captchaToken = '';
-          return;
-        }
-        if (res.status === 403) {
-          showOut('err', 'error: 403 forbidden — SOLVE_TOKEN in Render env does not match.');
-          btn.disabled = false; btn.textContent = 'RUN'; turnstile.reset(); captchaToken = '';
-          return;
-        }
-
-        const data = await res.json();
-        if (data.success && data.key) {
-          currentKey = data.key;
-          showOut('ok', 'key: ' + escHtml(data.key));
-          cpyBtn.classList.add('visible');
-        } else {
-          showOut('err', 'error: ' + escHtml(data.error || 'unknown — grab a fresh link and retry'));
-        }
-      } catch (e) {
-        if (e.name === 'AbortError') {
-          showOut('err', 'error: request timed out after 45s — PlatoRelay may be down, grab a fresh link and retry');
-        } else {
-          showOut('err', 'error: connection failed — ' + escHtml(e.message || 'check your internet and retry'));
-        }
+      const logLines = [];
+      function appendLog(msg) {
+        logLines.push(escHtml(msg));
+        const display = logLines.slice(-6).join('<br>');
+        showOut('wait', display + '<span class="cursor"></span>');
       }
 
-      btn.disabled = false; btn.textContent = 'RUN'; turnstile.reset(); captchaToken = '';
+      const savedToken = captchaToken;
+      captchaToken = '';
+
+      _sseStream('/solve-stream',
+        { link, captcha: savedToken },
+        {
+          signal: deltaAbort.signal,
+          onStatus: (msg) => appendLog('> ' + msg),
+          onDone: (data) => {
+            if (data.success && data.key) {
+              currentKey = data.key;
+              showOut('ok', 'key: ' + escHtml(data.key));
+              cpyBtn.classList.add('visible');
+            } else if (data.oauth) {
+              showOut('err', 'error: OAuth required — ' + escHtml(data.error || ''));
+            } else {
+              showOut('err', 'error: ' + escHtml(data.error || 'unknown'));
+            }
+            btn.disabled = false; btn.textContent = 'RUN';
+            if (typeof turnstile !== 'undefined') turnstile.reset();
+          },
+          onError: (msg) => {
+            showOut('err', msg);
+            btn.disabled = false; btn.textContent = 'RUN';
+            if (typeof turnstile !== 'undefined') turnstile.reset();
+          },
+        }
+      );
     }
 
     function showOut(type, html) {
@@ -848,75 +882,63 @@
 
     function copyKey() {
       if (!currentKey) return;
-      const btn = document.getElementById('copy-btn');
-      _doCopy(currentKey, btn);
+      _doCopy(currentKey, document.getElementById('copy-btn'));
     }
 
     // ── LootLabs solver ──────────────────────────────────────────────────────
+    let llAbort = null;
+
     async function solveLootlabs() {
       const input  = document.getElementById('ll-link-input');
       const btn    = document.getElementById('ll-solve-btn');
-      const outTxt = document.getElementById('ll-out-text');
-      const output = document.getElementById('ll-term-output');
       const cpyBtn = document.getElementById('ll-copy-btn');
       const link   = input.value.trim();
 
-      if (!link) {
-        showLLOut('err', 'error: no input — paste a LootLabs link first');
-        return;
-      }
-      if (!captchaToken) {
-        showLLOut('err', 'error: captcha not completed — check the box above');
-        return;
-      }
+      if (!link) { showLLOut('err', 'error: no input — paste a LootLabs link first'); return; }
+      if (!captchaToken) { showLLOut('err', 'error: captcha not completed — check the box above'); return; }
+
+      if (llAbort) llAbort.abort();
+      llAbort = new AbortController();
 
       btn.disabled = true;
       btn.textContent = '...';
       cpyBtn.classList.remove('visible');
       currentLLResult = '';
-      showLLOut('wait', 'running bypass — please wait (up to 60s)<span class="cursor"></span>');
+      showLLOut('wait', 'initialising bypass...<span class="cursor"></span>');
 
-      try {
-        const controller = new AbortController();
-        const timeoutId  = setTimeout(() => controller.abort(), 70000);
-
-        const res = await fetch('/solve-lootlabs', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Token': API_TOKEN,
-          },
-          body: JSON.stringify({ link, captcha: captchaToken }),
-        });
-        clearTimeout(timeoutId);
-
-        const contentType = res.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          showLLOut('err', 'error: server returned HTTP ' + res.status + ' — check Render logs');
-          btn.disabled = false; btn.textContent = 'RUN';
-          if (llWidgetId !== null) { turnstile.reset(llWidgetId); } captchaToken = '';
-          return;
-        }
-
-        const data = await res.json();
-        if (data.success && data.result) {
-          currentLLResult = data.result;
-          showLLOut('ok', 'result: ' + escHtml(data.result));
-          cpyBtn.classList.add('visible');
-        } else {
-          showLLOut('err', 'error: ' + escHtml(data.error || 'bypass failed — try a fresh link'));
-        }
-      } catch (e) {
-        if (e.name === 'AbortError') {
-          showLLOut('err', 'error: timed out — LootLabs servers may be slow, try again');
-        } else {
-          showLLOut('err', 'error: connection failed — ' + escHtml(e.message || 'check your internet'));
-        }
+      const logLines = [];
+      function appendLog(msg) {
+        logLines.push(escHtml(msg));
+        const display = logLines.slice(-6).join('<br>');
+        showLLOut('wait', display + '<span class="cursor"></span>');
       }
 
-      btn.disabled = false; btn.textContent = 'RUN';
-      if (llWidgetId !== null) { turnstile.reset(llWidgetId); } captchaToken = '';
+      const savedToken = captchaToken;
+      captchaToken = '';
+
+      _sseStream('/solve-lootlabs-stream',
+        { link, captcha: savedToken },
+        {
+          signal: llAbort.signal,
+          onStatus: (msg) => appendLog('> ' + msg),
+          onDone: (data) => {
+            if (data.success && data.result) {
+              currentLLResult = data.result;
+              showLLOut('ok', 'result: ' + escHtml(data.result));
+              cpyBtn.classList.add('visible');
+            } else {
+              showLLOut('err', 'error: ' + escHtml(data.error || 'bypass failed'));
+            }
+            btn.disabled = false; btn.textContent = 'RUN';
+            if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
+          },
+          onError: (msg) => {
+            showLLOut('err', msg);
+            btn.disabled = false; btn.textContent = 'RUN';
+            if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
+          },
+        }
+      );
     }
 
     function showLLOut(type, html) {
@@ -929,8 +951,7 @@
 
     function copyLLResult() {
       if (!currentLLResult) return;
-      const btn = document.getElementById('ll-copy-btn');
-      _doCopy(currentLLResult, btn);
+      _doCopy(currentLLResult, document.getElementById('ll-copy-btn'));
     }
 
     // ── shared helpers ────────────────────────────────────────────────────────
