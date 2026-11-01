@@ -116,33 +116,6 @@ def extract_ticket_from_callback(cb: str):
     return qs.get("d", [None])[0]
 
 
-# ─── session init ──────────────────────────────────────────────────────────────
-
-def init_session(ticket: str):
-    """
-    Hit the /a landing page to initialize the server-side session for this
-    ticket before we start stepping. Without this, PlatoRelay has no context
-    for the ticket and will reject or loop the step calls.
-    Best-effort — we continue regardless of outcome.
-    """
-    url = f"https://auth.platorelay.com/a?d={urllib.parse.quote(ticket)}"
-    try:
-        requests.get(
-            url,
-            headers={
-                "User-Agent":       UA,
-                "Accept":           "text/html,application/xhtml+xml,*/*",
-                "Accept-Language":  "en-US,en;q=0.9",
-                "x-client-name":    "platoboost webclient",
-                "x-client-version": VERSION,
-            },
-            timeout=12,
-            verify=False,
-            allow_redirects=True,
-        )
-    except Exception:
-        pass
-
 
 # ─── core logic ────────────────────────────────────────────────────────────────
 
@@ -209,19 +182,18 @@ def solve(raw_link: str):
     if len(ticket) < MIN_TICKET_LEN:
         return None, "ticket too short"
 
-    # ── warm up the server-side session before any step calls ──────────────────
-    init_session(ticket)
-    time.sleep(1.5)   # give PlatoRelay a moment to register the session
+    # exact logic mirror of main_v2.py ────────────────────────────────────────
+    # seen set tracks tickets we've already stepped on — same ticket twice = loop
+    seen   = set()
+    gap_ts = 0.0
 
-    # ── track visited tickets PER-STEP, not the starting ticket across rounds ──
-    # old code added `ticket` to `seen` at the top of the loop, so the SAME
-    # ticket on round 2 (retry after throttle) triggered "loop detected".
-    # now we only flag a ticket as looping if we receive it back as a *new*
-    # redirect target — i.e. the server is cycling us in circles.
-    redirect_seen = set()
-    gap_ts        = 0.0
+    for rnd in range(12):
+        # loop guard: same ticket appearing again = infinite redirect cycle
+        if ticket in seen:
+            return None, "ticket already used"
+        seen.add(ticket)
 
-    for rnd in range(14):
+        # enforce minimum 5s gap between steps (server rate-limit)
         if gap_ts:
             elapsed = time.time() - gap_ts
             if elapsed < MIN_STEP_GAP:
@@ -233,11 +205,10 @@ def solve(raw_link: str):
         if not isinstance(r, dict) or not r.get("success"):
             msg = str(r.get("message") or r.get("error") or "").lower()
             if "too fast" in msg or "slow down" in msg:
+                # throttled: sleep then retry SAME ticket (don't advance loop)
                 time.sleep(STEP_THROTTLE_SLEEP)
+                seen.discard(ticket)   # remove so next iteration re-steps it
                 continue
-            if "already" in msg or "used" in msg:
-                # server says ticket is consumed — nothing we can do
-                return None, "ticket already used"
             time.sleep(1.5)
             continue
 
@@ -247,6 +218,8 @@ def solve(raw_link: str):
             return k, None
 
         url = data.get("url", "")
+
+        # about:blank or empty url = key should be ready, poll for it
         if url == "about:blank" or not url:
             k = poll_key(ticket)
             return (k, None) if k else (None, "polling failed")
@@ -255,12 +228,10 @@ def solve(raw_link: str):
         nt = extract_ticket_from_callback(cb) if cb else None
 
         if nt and len(nt) > 50:
-            # only flag as loop if we've already visited this NEW ticket
-            if nt in redirect_seen:
-                return None, "redirect loop detected"
-            redirect_seen.add(nt)
+            # got a new ticket from the redirect chain, advance to it
             ticket = nt
         else:
+            # decode failed, try polling current ticket before giving up
             k = poll_key(ticket)
             return (k, None) if k else (None, "callback decode failed")
 
@@ -309,12 +280,11 @@ def route_solve():
         return jsonify({"success": True, "key": key}), 200
 
     messages = {
-        "ticket too short":       "Invalid link. Make sure you copied the full link from the Delta checkpoint page.",
-        "ticket already used":    "This link has already been used. Go back to Delta and get a fresh checkpoint link.",
-        "redirect loop detected": "PlatoRelay returned a redirect loop. Get a fresh link from Delta.",
-        "polling failed":         "Key could not be retrieved. The link may have expired — get a new one from Delta.",
+        "ticket too short":    "Invalid link — make sure you copied the full URL from the Delta checkpoint page.",
+        "ticket already used": "This link has already been used or PlatoRelay is looping it. Go back to Delta and get a fresh checkpoint link.",
+        "polling failed":      "Key could not be retrieved. The link may have expired — get a new one from Delta.",
         "callback decode failed": "Checkpoint step failed. Try again with a fresh link from Delta.",
-        "max rounds reached":     "Solver timed out. PlatoRelay may be slow right now — try again in a few seconds.",
+        "max rounds reached":  "Solver timed out after 12 rounds. PlatoRelay may be slow — try again in a few seconds.",
     }
     friendly = messages.get(err, "Something went wrong. Grab a fresh link from Delta and try again.")
     return jsonify({"success": False, "error": friendly}), 500
