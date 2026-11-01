@@ -1410,37 +1410,74 @@
               midBtn.disabled = true;
               midBtn.textContent = 'Complete the check first';
 
-              // Listen for Turnstile success postMessage from the iframe
+              // ── captcha detection — three layers ──────────────────────────
+
+              let captchaDone = false;
+
+              function markCaptchaDone(auto) {
+                if (captchaDone) return;
+                captchaDone = true;
+                window.removeEventListener('message', onIframeMsg);
+                clearInterval(urlPollInterval);
+                clearTimeout(fallbackTimer);
+                status.innerHTML = '<div class="verify-spinner solved"></div><span>Verified ✓ — continuing...</span>';
+                midBtn.disabled = false;
+                midBtn.textContent = 'Continue Bypass';
+                // auto-click so user doesn't have to tap at all
+                if (auto) setTimeout(() => midBtn.click(), 400);
+              }
+
+              // layer 1: postMessage from the iframe (works when same-origin or
+              // when LootLabs explicitly posts to parent)
               function onIframeMsg(e) {
-                // nerventualken.com Turnstile posts various messages on success
                 const isTurnstileOk = (
-                  (typeof e.data === 'string' && (e.data.includes('success') || e.data.includes('turnstile'))) ||
+                  (typeof e.data === 'string' && (
+                    e.data.includes('success') ||
+                    e.data.includes('turnstile') ||
+                    e.data.includes('verified') ||
+                    e.data.includes('complete')
+                  )) ||
                   (typeof e.data === 'object' && e.data !== null && (
                     e.data.event === 'success' ||
                     e.data['cf-turnstile-response'] ||
                     e.data.token ||
-                    e.data.success === true
+                    e.data.success === true ||
+                    e.data.verified === true
                   ))
                 );
-                if (isTurnstileOk) {
-                  status.innerHTML = '<div class="verify-spinner solved"></div><span>Verified ✓ — click Continue Bypass.</span>';
-                  midBtn.disabled = false;
-                  midBtn.textContent = 'Continue Bypass';
-                  window.removeEventListener('message', onIframeMsg);
-                }
+                if (isTurnstileOk) markCaptchaDone(true);
               }
               window.addEventListener('message', onIframeMsg);
 
-              // Fallback: if postMessage never fires (some browsers block cross-origin),
-              // enable after 15s with a note so user isn't stuck
-              setTimeout(() => {
-                if (midBtn.disabled) {
+              // layer 2: poll iframe URL — after Turnstile success nerventualken
+              // often redirects the iframe to a success/done page. we catch that
+              // even when postMessage is blocked cross-origin.
+              const urlPollInterval = setInterval(() => {
+                try {
+                  const loc = iframe.contentWindow.location.href;
+                  if (loc && (
+                    loc.includes('success') ||
+                    loc.includes('done') ||
+                    loc.includes('verified') ||
+                    loc.includes('complete') ||
+                    loc.includes('callback')
+                  )) markCaptchaDone(true);
+                } catch (_) {
+                  // cross-origin block — expected, ignore
+                }
+              }, 300);
+
+              // layer 3: hard fallback — if neither fires, unlock after 6s
+              // (down from 15s — user almost always finishes in <5s)
+              const fallbackTimer = setTimeout(() => {
+                if (!captchaDone) {
                   status.innerHTML = '<div class="verify-spinner"></div><span>Done with the check? Click Continue.</span>';
                   midBtn.disabled = false;
                   midBtn.textContent = 'Continue Bypass';
+                  clearInterval(urlPollInterval);
                   window.removeEventListener('message', onIframeMsg);
                 }
-              }, 15000);
+              }, 6000);
               return;
             }
             nextLLStep();
