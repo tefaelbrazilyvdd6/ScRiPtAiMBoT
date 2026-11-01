@@ -582,7 +582,7 @@ def _ll_canserbero(session, ws_domain, tasks, p_key, tid, ws_session, origin, do
             header=_ll_ws_header_list(session),
             origin=origin if str(origin).startswith("http") else f"https://{origin}",
         )
-        ws.settimeout(0.5)
+        ws.settimeout(0.1)
 
         def _ping():
             while not ping_stop.wait(10):
@@ -610,6 +610,10 @@ def _ll_canserbero(session, ws_domain, tasks, p_key, tid, ws_session, origin, do
             result = _ll_parse_r_payload(message)
             if result:
                 done["result"] = result
+                # signal the main thread immediately so it doesn't wait the full timeout
+                ev = done.get("event")
+                if ev:
+                    ev.set()
                 return
     except Exception:
         pass
@@ -774,7 +778,8 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                 f"https://enaightdecipie.com/?event=task_clicked"
                 f"&session_id={item.get('task_id')}&info={idx + 1}")
 
-        done = {"result": None}
+        result_event = threading.Event()
+        done = {"result": None, "event": result_event}
         emit("opening WebSocket connection...")
         ws_thread = threading.Thread(
             target=_ll_canserbero,
@@ -828,7 +833,9 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
             else:
                 emit("captcha task detected but no solver provided — result may fail")
 
-        ws_thread.join(timeout=40)
+        # wait for result_event instead of joining the thread —
+        # exits the moment WebSocket delivers a result, not after 40s
+        result_event.wait(timeout=40)
 
         if done["result"]:
             emit(f"bypassed! ({taken()})")
