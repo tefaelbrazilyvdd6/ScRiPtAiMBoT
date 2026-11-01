@@ -832,6 +832,25 @@
           </div>
         </div>
 
+        <!-- LootLabs mid-process captcha (shown when LootLabs itself requires one) -->
+        <div class="verify-step" id="ll-mid-captcha" style="display:none">
+          <div class="verify-card">
+            <div class="verify-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            </div>
+            <div class="verify-title">One More Check</div>
+            <div class="verify-sub">LootLabs requires you to confirm you're human. Solve the box below to continue.</div>
+            <div class="verify-turnstile" id="ll-mid-captcha-container" style="min-height:68px;display:flex;align-items:center;justify-content:center;">
+              <!-- Turnstile rendered here by JS -->
+            </div>
+            <div class="verify-status" id="ll-mid-captcha-status">
+              <div class="verify-spinner"></div>
+              <span>Waiting for you to solve the captcha...</span>
+            </div>
+            <button class="btn-run verify-continue" id="ll-mid-captcha-btn" onclick="submitLLMidCaptcha()" disabled>Continue Bypass</button>
+          </div>
+        </div>
+
         <div class="term-output" id="ll-term-output">
           <div class="out-line">
             <span class="out-prefix">&gt;</span>
@@ -897,16 +916,20 @@
   <script>
     const API_TOKEN = '{{ solve_token }}';
 
-    let captchaToken  = '';
-    let llWidgetId    = null;
-    let currentKey    = '';
-    let currentLLResult = '';
+    let captchaToken      = '';
+    let llWidgetId        = null;
+    let llMidWidgetId     = null;
+    let llMidCaptchaToken = '';
+    let llSessionId       = null;
+    let currentKey        = '';
+    let currentLLResult   = '';
 
     // ── link validators ──────────────────────────────────────────────────────
     function isValidDeltaLink(url) {
       try {
         const u = new URL(url);
-        return u.hostname === 'gateway.platoboost.com';
+        return u.hostname === 'gateway.platoboost.com' ||
+               u.hostname === 'auth.platorelay.com';
       } catch { return false; }
     }
 
@@ -961,6 +984,45 @@
         status.innerHTML = '<div class="verify-spinner"></div><span>Verification expired — please retry</span>';
       }
       if (btn) btn.disabled = true;
+    }
+
+    // ── LootLabs mid-process captcha ─────────────────────────────────────────
+    function onLLMidCaptchaSolved(token) {
+      llMidCaptchaToken = token;
+      const status = document.getElementById('ll-mid-captcha-status');
+      const btn    = document.getElementById('ll-mid-captcha-btn');
+      status.classList.add('solved');
+      status.innerHTML = '<div class="verify-spinner"></div><span>Verified ✓ — click Continue to resume</span>';
+      btn.disabled = false;
+    }
+
+    function onLLMidCaptchaExpired() {
+      llMidCaptchaToken = '';
+      const status = document.getElementById('ll-mid-captcha-status');
+      const btn    = document.getElementById('ll-mid-captcha-btn');
+      status.classList.remove('solved');
+      status.innerHTML = '<div class="verify-spinner"></div><span>Expired — please solve again</span>';
+      btn.disabled = true;
+    }
+
+    async function submitLLMidCaptcha() {
+      if (!llMidCaptchaToken || !llSessionId) return;
+      const btn = document.getElementById('ll-mid-captcha-btn');
+      btn.disabled = true;
+      btn.textContent = 'Resuming...';
+
+      try {
+        await fetch('/ll-captcha-submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Token': API_TOKEN },
+          body: JSON.stringify({ session_id: llSessionId, captcha_token: llMidCaptchaToken }),
+        });
+      } catch(e) {}
+
+      // Hide mid-captcha card, resume status display
+      document.getElementById('ll-mid-captcha').style.display = 'none';
+      showLLOut('wait', 'Captcha submitted — resuming bypass...<span class="cursor"></span>');
+      llMidCaptchaToken = '';
     }
 
     function cancelVerify(tab) {
@@ -1033,7 +1095,9 @@
               if (!line.startsWith('data:')) continue;
               try {
                 const d = JSON.parse(line.slice(5).trim());
-                if (d.type === 'status') onStatus(d.msg);
+                if (d.type === 'status') onStatus(d.msg, d);
+                else if (d.type === 'session') onStatus(null, d);
+                else if (d.type === 'captcha_needed') onStatus(null, d);
                 else if (d.type === 'done') { onDone(d); return; }
               } catch(e) {}
             }
@@ -1098,12 +1162,22 @@
       currentKey = '';
       showOut('wait', 'initialising solver...<span class="cursor"></span>');
 
-      const logLines = [];
-      function appendLog(msg) {
-        logLines.push(escHtml(msg));
-        const display = logLines.slice(-6).join('<br>');
-        showOut('wait', display + '<span class="cursor"></span>');
+      let step = 0;
+      const deltaSteps = [
+        'Connecting to bypass service...',
+        'Reading your checkpoint link...',
+        'Contacting Delta servers...',
+        'Working through the checkpoint...',
+        'Almost there, retrieving your key...',
+      ];
+
+      function nextStep() {
+        const msg = deltaSteps[Math.min(step, deltaSteps.length - 1)];
+        step++;
+        showOut('wait', escHtml(msg) + '<span class="cursor"></span>');
       }
+
+      nextStep();
 
       const savedToken = captchaToken;
       captchaToken = '';
@@ -1112,22 +1186,22 @@
         { link, captcha: savedToken },
         {
           signal: deltaAbort.signal,
-          onStatus: (msg) => appendLog('> ' + msg),
+          onStatus: (_msg, _raw) => nextStep(),
           onDone: (data) => {
             if (data.success && data.key) {
               currentKey = data.key;
-              showOut('ok', 'key: ' + escHtml(data.key));
+              showOut('ok', '✓ Your key is ready: ' + escHtml(data.key));
               cpyBtn.classList.add('visible');
             } else if (data.oauth) {
-              showOut('err', 'error: OAuth required — ' + escHtml(data.error || ''));
+              showOut('err', '✗ This link requires extra authorization — try getting a fresh link from Delta.');
             } else {
-              showOut('err', 'error: ' + escHtml(data.error || 'unknown'));
+              showOut('err', '✗ Something went wrong. Please try again with a fresh link.');
             }
             btn.disabled = false; btn.textContent = 'RUN';
             if (typeof turnstile !== 'undefined') turnstile.reset();
           },
-          onError: (msg) => {
-            showOut('err', msg);
+          onError: () => {
+            showOut('err', '✗ Could not reach the bypass service. Check your connection and try again.');
             btn.disabled = false; btn.textContent = 'RUN';
             if (typeof turnstile !== 'undefined') turnstile.reset();
           },
@@ -1209,12 +1283,22 @@
       currentLLResult = '';
       showLLOut('wait', 'initialising bypass...<span class="cursor"></span>');
 
-      const logLines = [];
-      function appendLog(msg) {
-        logLines.push(escHtml(msg));
-        const display = logLines.slice(-6).join('<br>');
-        showLLOut('wait', display + '<span class="cursor"></span>');
+      let llStep = 0;
+      const llSteps = [
+        'Connecting to bypass service...',
+        'Reading your LootLabs link...',
+        'Contacting LootLabs servers...',
+        'Working through the tasks...',
+        'Almost there, fetching your destination...',
+      ];
+
+      function nextLLStep() {
+        const msg = llSteps[Math.min(llStep, llSteps.length - 1)];
+        llStep++;
+        showLLOut('wait', escHtml(msg) + '<span class="cursor"></span>');
       }
+
+      nextLLStep();
 
       const savedToken = captchaToken;
       captchaToken = '';
@@ -1223,20 +1307,58 @@
         { link, captcha: savedToken },
         {
           signal: llAbort.signal,
-          onStatus: (msg) => appendLog('> ' + msg),
+          onStatus: (msg, raw) => {
+            // Handle special event types from the API
+            if (raw && raw.type === 'session') {
+              llSessionId = raw.session_id;
+              return;
+            }
+            if (raw && raw.type === 'captcha_needed') {
+              llSessionId = raw.session_id;
+              // Show mid-process captcha card to the user
+              showLLOut('wait', 'LootLabs requires a quick verification — see below...<span class="cursor"></span>');
+              const mid = document.getElementById('ll-mid-captcha');
+              mid.style.display = 'block';
+              // Reset state
+              llMidCaptchaToken = '';
+              document.getElementById('ll-mid-captcha-btn').disabled = true;
+              document.getElementById('ll-mid-captcha-btn').textContent = 'Continue Bypass';
+              const status = document.getElementById('ll-mid-captcha-status');
+              status.classList.remove('solved');
+              status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for you to solve the captcha...</span>';
+              // Render Turnstile in the mid-captcha card
+              const container = document.getElementById('ll-mid-captcha-container');
+              container.innerHTML = '';
+              if (typeof turnstile !== 'undefined') {
+                if (llMidWidgetId !== null) {
+                  try { turnstile.remove(llMidWidgetId); } catch(e) {}
+                }
+                llMidWidgetId = turnstile.render(container, {
+                  sitekey: '0x4AAAAAAFuUDcKH0b9gZL9E',
+                  theme: 'dark',
+                  callback: onLLMidCaptchaSolved,
+                  'expired-callback': onLLMidCaptchaExpired,
+                });
+              }
+              return;
+            }
+            nextLLStep();
+          },
           onDone: (data) => {
+            document.getElementById('ll-mid-captcha').style.display = 'none';
             if (data.success && data.result) {
               currentLLResult = data.result;
-              showLLOut('ok', 'result: ' + escHtml(data.result));
+              showLLOut('ok', '✓ Done! Your link is ready: ' + escHtml(data.result));
               cpyBtn.classList.add('visible');
             } else {
-              showLLOut('err', 'error: ' + escHtml(data.error || 'bypass failed'));
+              showLLOut('err', '✗ Something went wrong. Please try again with a fresh link.');
             }
             btn.disabled = false; btn.textContent = 'RUN';
             if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
           },
-          onError: (msg) => {
-            showLLOut('err', msg);
+          onError: () => {
+            document.getElementById('ll-mid-captcha').style.display = 'none';
+            showLLOut('err', '✗ Could not reach the bypass service. Check your connection and try again.');
             btn.disabled = false; btn.textContent = 'RUN';
             if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
           },
