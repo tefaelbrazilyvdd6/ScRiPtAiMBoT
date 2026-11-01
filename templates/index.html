@@ -1404,10 +1404,43 @@
               iframe.style.cssText = 'width:100%;height:200px;border:none;border-radius:8px;';
               iframe.allow = 'same-origin';
               container.appendChild(iframe);
-              status.innerHTML = '<div class="verify-spinner"></div><span>Complete the check above, then click Continue.</span>';
-              // Enable Continue immediately — user decides when they're done in the iframe
+              status.innerHTML = '<div class="verify-spinner"></div><span>Complete the Cloudflare check above first.</span>';
+              // Keep button disabled until captcha is confirmed done
               const midBtn = document.getElementById('ll-mid-captcha-btn');
-              midBtn.disabled = false;
+              midBtn.disabled = true;
+              midBtn.textContent = 'Complete the check first';
+
+              // Listen for Turnstile success postMessage from the iframe
+              function onIframeMsg(e) {
+                // nerventualken.com Turnstile posts various messages on success
+                const isTurnstileOk = (
+                  (typeof e.data === 'string' && (e.data.includes('success') || e.data.includes('turnstile'))) ||
+                  (typeof e.data === 'object' && e.data !== null && (
+                    e.data.event === 'success' ||
+                    e.data['cf-turnstile-response'] ||
+                    e.data.token ||
+                    e.data.success === true
+                  ))
+                );
+                if (isTurnstileOk) {
+                  status.innerHTML = '<div class="verify-spinner solved"></div><span>Verified ✓ — click Continue Bypass.</span>';
+                  midBtn.disabled = false;
+                  midBtn.textContent = 'Continue Bypass';
+                  window.removeEventListener('message', onIframeMsg);
+                }
+              }
+              window.addEventListener('message', onIframeMsg);
+
+              // Fallback: if postMessage never fires (some browsers block cross-origin),
+              // enable after 15s with a note so user isn't stuck
+              setTimeout(() => {
+                if (midBtn.disabled) {
+                  status.innerHTML = '<div class="verify-spinner"></div><span>Done with the check? Click Continue.</span>';
+                  midBtn.disabled = false;
+                  midBtn.textContent = 'Continue Bypass';
+                  window.removeEventListener('message', onIframeMsg);
+                }
+              }, 15000);
               return;
             }
             nextLLStep();
