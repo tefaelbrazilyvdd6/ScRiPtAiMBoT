@@ -1087,64 +1087,92 @@
               const mid = document.getElementById('ll-mid-captcha');
               mid.style.display = 'block';
               llMidCaptchaToken = '';
-              const midBtn = document.getElementById('ll-mid-captcha-btn');
-              midBtn.disabled = true;
-              midBtn.textContent = 'Waiting for verification...';
+              document.getElementById('ll-mid-captcha-btn').disabled = true;
+              document.getElementById('ll-mid-captcha-btn').textContent = 'Continue Bypass';
               const status = document.getElementById('ll-mid-captcha-status');
               status.classList.remove('solved');
+              status.innerHTML = '<div class="verify-spinner"></div><span>Loading verification...</span>';
               const container = document.getElementById('ll-mid-captcha-container');
               container.innerHTML = '';
+              // Inject LootLabs captcha page as iframe — runs on their domain so sitekey works
+              const capUrl = raw.cap_url || `https://nerventualken.com/captcha?urid=unknown`;
+              const iframe = document.createElement('iframe');
+              iframe.src = capUrl;
+              iframe.style.cssText = 'width:100%;height:200px;border:none;border-radius:8px;';
+              iframe.allow = 'same-origin';
+              container.appendChild(iframe);
+              status.innerHTML = '<div class="verify-spinner"></div><span>Complete the Cloudflare check above first.</span>';
+              // Keep button disabled until captcha is confirmed done
+              const midBtn = document.getElementById('ll-mid-captcha-btn');
+              midBtn.disabled = true;
+              midBtn.textContent = 'Complete the check first';
 
-              const capUrl  = raw.cap_url  || '';
-              const sitekey = raw.sitekey  || '';
+              // ── captcha detection — three layers ────────────────────────────────
+              let captchaDone = false;
+              let urlPollInterval = null;
+              let fallbackTimer   = null;
 
-              if (sitekey && typeof turnstile !== 'undefined') {
-                // ── Native Turnstile widget (fast path) ────────────────────────────
-                // Render directly on this page using the real sitekey extracted
-                // from LootLabs’ captcha page.  Token goes straight to the server
-                // which calls /captcha/verify with the correct Origin header.
-                status.innerHTML = '<div class="verify-spinner"></div><span>Solve the check below to continue.</span>';
-                let midWidgetId = null;
-                midWidgetId = turnstile.render(container, {
-                  sitekey,
-                  callback: async (token) => {
-                    status.innerHTML = '<div class="verify-spinner solved"></div><span>Verified ✓ — resuming bypass...</span>';
-                    midBtn.disabled = true;
-                    midBtn.textContent = 'Resuming...';
-                    try {
-                      await fetch('/ll-captcha-submit', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Token': window._solveToken || '' },
-                        body: JSON.stringify({ session_id: llSessionId, captcha_token: token }),
-                      });
-                    } catch (_) {}
-                    showLLOut('wait', 'Verification done — resuming bypass...<span class="cursor"></span>');
-                    mid.style.display = 'none';
-                  },
-                  'error-callback': () => {
-                    status.innerHTML = '<div class="verify-spinner"></div><span>Verification failed — reload and try again.</span>';
-                    if (midWidgetId !== null) turnstile.reset(midWidgetId);
-                  },
-                });
-              } else {
-                // ── Fallback: iframe (sitekey not available) ────────────────────
-                // Show the LootLabs captcha page in an iframe.  The user must
-                // solve it and then click Continue Bypass manually.
-                status.innerHTML = '<div class="verify-spinner"></div><span>Complete the Cloudflare check above, then click Continue.</span>';
-                if (capUrl) {
-                  const iframe = document.createElement('iframe');
-                  iframe.src = capUrl;
-                  iframe.style.cssText = 'width:100%;height:220px;border:none;border-radius:8px;';
-                  iframe.allow = 'same-origin';
-                  container.appendChild(iframe);
-                }
-                // Enable button after 5 s — enough time for the iframe to load
-                setTimeout(() => {
-                  midBtn.disabled = false;
-                  midBtn.textContent = 'Continue Bypass';
-                  status.innerHTML = '<div class="verify-spinner"></div><span>Done with the check? Click Continue.</span>';
-                }, 5000);
+              function markCaptchaDone(auto) {
+                if (captchaDone) return;
+                captchaDone = true;
+                window.removeEventListener('message', onIframeMsg);
+                if (urlPollInterval) clearInterval(urlPollInterval);
+                if (fallbackTimer)   clearTimeout(fallbackTimer);
+                status.innerHTML = '<div class="verify-spinner solved"></div><span>Verified ✓ — continuing...</span>';
+                midBtn.disabled = false;
+                midBtn.textContent = 'Continue Bypass';
+                // auto-click so user doesn’t need to tap
+                if (auto) setTimeout(() => midBtn.click(), 400);
               }
+
+              // layer 1: postMessage from iframe
+              function onIframeMsg(e) {
+                const isTurnstileOk = (
+                  (typeof e.data === 'string' && (
+                    e.data.includes('success') ||
+                    e.data.includes('turnstile') ||
+                    e.data.includes('verified') ||
+                    e.data.includes('complete')
+                  )) ||
+                  (typeof e.data === 'object' && e.data !== null && (
+                    e.data.event === 'success' ||
+                    e.data['cf-turnstile-response'] ||
+                    e.data.token ||
+                    e.data.success === true ||
+                    e.data.verified === true
+                  ))
+                );
+                if (isTurnstileOk) markCaptchaDone(true);
+              }
+              window.addEventListener('message', onIframeMsg);
+
+              // layer 2 + 3: start AFTER iframe loads so the fallback clock
+              // doesn’t run while the page is still loading
+              iframe.addEventListener('load', () => {
+                // layer 2: poll iframe URL for redirect to success/done
+                urlPollInterval = setInterval(() => {
+                  try {
+                    const loc = iframe.contentWindow.location.href;
+                    if (loc && (
+                      loc.includes('success') || loc.includes('done') ||
+                      loc.includes('verified') || loc.includes('complete') ||
+                      loc.includes('callback')
+                    )) markCaptchaDone(true);
+                  } catch (_) {}
+                }, 300);
+
+                // layer 3: fallback — 7s after iframe finishes loading
+                // (user had time to see and solve the Turnstile)
+                fallbackTimer = setTimeout(() => {
+                  if (!captchaDone) {
+                    clearInterval(urlPollInterval);
+                    window.removeEventListener('message', onIframeMsg);
+                    status.innerHTML = '<div class="verify-spinner"></div><span>Done with the check? Click Continue.</span>';
+                    midBtn.disabled = false;
+                    midBtn.textContent = 'Continue Bypass';
+                  }
+                }, 7000);
+              });
               return;
             }
             nextLLStep();
