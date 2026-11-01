@@ -798,10 +798,17 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                 cap_url = f"https://{SYNCER}/captcha?urid={urid}"
 
             if captcha_token_cb:
-                emit(f"captcha required — waiting for user to solve ({cap_url})...")
+                emit(f"captcha required — waiting for user ({cap_url})...")
                 try:
                     token = captcha_token_cb(cap_url)
-                    if token:
+                    if token == "iframe_done":
+                        # User solved captcha directly on LootLabs' domain via iframe.
+                        # Token was submitted to their backend by their own JS.
+                        # Skip /captcha/verify — just fire the td tracking pixel and let WS finish.
+                        emit("captcha solved via iframe — continuing...")
+                        _ll_fire(_ll_get, session,
+                            f"https://{SYNCER}/td?ac=captcha&urid={urid}&=&cat={task_id}&tid={tid}")
+                    elif token:
                         emit("captcha token received, verifying...")
                         vrf = session.post(
                             f"https://{SYNCER}/captcha/verify",
@@ -821,7 +828,7 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
             else:
                 emit("captcha task detected but no solver provided — result may fail")
 
-        ws_thread.join(timeout=25)
+        ws_thread.join(timeout=40)
 
         if done["result"]:
             emit(f"bypassed! ({taken()})")
