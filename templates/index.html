@@ -631,37 +631,39 @@
     .oauth-notice {
       display: none;
       margin: 18px 0 0;
-      border: 1px solid #5a1a1a;
-      background: rgba(90, 20, 20, 0.25);
-      padding: 16px 18px;
+      border: 1px solid #7a2020;
+      background: rgba(100, 15, 15, 0.35);
+      border-radius: 6px;
+      padding: 18px 20px;
     }
     .oauth-notice.visible { display: block; }
     .oauth-notice .on-title {
-      font-size: 12px;
+      font-size: 13px;
       color: #ff6b6b;
-      font-weight: 500;
-      margin-bottom: 10px;
-      letter-spacing: 0.04em;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: 0.03em;
     }
     .oauth-notice ol {
       margin: 0;
-      padding-left: 18px;
+      padding-left: 20px;
       list-style: decimal;
     }
     .oauth-notice ol li {
       font-size: 12px;
-      color: #c97070;
-      line-height: 1.9;
+      color: #d98080;
+      line-height: 2;
     }
-    .oauth-notice ol li code {
-      color: #ffaaaa;
-      font-size: 11px;
+    .oauth-notice ol li strong {
+      color: #ffbbbb;
     }
     .oauth-notice .on-link {
-      margin-top: 10px;
+      margin-top: 12px;
       font-size: 11px;
       color: var(--muted);
       word-break: break-all;
+      border-top: 1px solid #5a1a1a;
+      padding-top: 10px;
     }
 
     /* ── tab switcher ── */
@@ -777,6 +779,19 @@
             <span class="out-text" id="out-text"><span class="cursor"></span></span>
           </div>
           <button class="btn-copy" id="copy-btn" onclick="copyKey()">[ copy key ]</button>
+        </div>
+
+        <!-- OAuth / account verification notice -->
+        <div class="oauth-notice" id="delta-oauth-notice">
+          <div class="on-title">⚠ Account Verification Required</div>
+          <ol>
+            <li>Open your Delta checkpoint link in your browser.</li>
+            <li>Wait 5 seconds, then tap <strong>Continue</strong>.</li>
+            <li>You'll receive a LootLabs link — copy it.</li>
+            <li>Go to the <strong>LootLabs</strong> tab on this site.</li>
+            <li>Paste the link there and hit <strong>RUN</strong> — it will give you the key.</li>
+          </ol>
+          <div class="on-link" id="delta-oauth-link"></div>
         </div>
       </div>
     </div>
@@ -923,6 +938,37 @@
     let llSessionId       = null;
     let currentKey        = '';
     let currentLLResult   = '';
+
+    // ── page visibility / stream resilience ──────────────────────────────────
+    // When the user hides the tab or navigates away mid-stream we can't keep
+    // the SSE alive. Instead: detect when the page becomes visible again and
+    // if a stream was in progress, show a clear "stream lost" message so the
+    // user knows to retry rather than staring at a frozen spinner.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        // Delta stream lost
+        const outText = document.getElementById('out-text');
+        if (outText && outText.classList.contains('wait')) {
+          showOut('err', '✗ Connection lost — please paste your link and try again.');
+          const btn = document.getElementById('solve-btn');
+          if (btn) { btn.disabled = false; btn.textContent = 'RUN'; }
+          if (deltaAbort) { try { deltaAbort.abort(); } catch(e) {} }
+        }
+        // LootLabs stream lost
+        const llOutText = document.getElementById('ll-out-text');
+        if (llOutText && llOutText.classList.contains('wait')) {
+          // If mid-captcha was showing, hide it
+          const mid = document.getElementById('ll-mid-captcha');
+          if (mid && mid.style.display !== 'none') {
+            mid.style.display = 'none';
+          }
+          showLLOut('err', '✗ Connection lost — please paste your link and try again.');
+          const llBtn = document.getElementById('ll-solve-btn');
+          if (llBtn) { llBtn.disabled = false; llBtn.textContent = 'RUN'; }
+          if (llAbort) { try { llAbort.abort(); } catch(e) {} }
+        }
+      }
+    });
 
     // ── link validators ──────────────────────────────────────────────────────
     function isValidDeltaLink(url) {
@@ -1150,8 +1196,10 @@
 
       if (!captchaToken) return;
 
-      // Hide verify step
+      // Hide verify step and oauth notice
       document.getElementById('delta-verify-step').style.display = 'none';
+      document.getElementById('delta-oauth-notice').classList.remove('visible');
+      document.getElementById('delta-oauth-link').innerHTML = '';
 
       if (deltaAbort) deltaAbort.abort();
       deltaAbort = new AbortController();
@@ -1193,7 +1241,30 @@
               showOut('ok', '✓ Your key is ready: ' + escHtml(data.key));
               cpyBtn.classList.add('visible');
             } else if (data.oauth) {
-              showOut('err', '✗ OAuth required — ' + escHtml(data.error || 'account verification needed'));
+              const oauthUrl  = data.oauth_url || '';
+              const isGoogle  = oauthUrl.includes('google.com');
+              const isDiscord = oauthUrl.includes('discord.com');
+              const provider  = isGoogle ? 'Google' : isDiscord ? 'Discord' : null;
+
+              const titleEl = document.querySelector('#delta-oauth-notice .on-title');
+              const listEl  = document.querySelector('#delta-oauth-notice ol');
+
+              titleEl.textContent = '⚠ Account Verification Required';
+              listEl.innerHTML = `
+                <li>Open your Delta checkpoint link in your browser.</li>
+                <li>Wait 5 seconds, then tap <strong>Continue</strong>.</li>
+                <li>You'll receive a LootLabs link — copy it.</li>
+                <li>Go to the <strong>LootLabs</strong> tab on this site.</li>
+                <li>Paste the link there and hit <strong>RUN</strong> — it will give you the key.</li>
+              `;
+
+              showOut('err', '✗ ' + (provider ? provider + ' verification' : 'Account verification') + ' required — follow the steps below.');
+              const notice = document.getElementById('delta-oauth-notice');
+              notice.classList.add('visible');
+              if (oauthUrl) {
+                const linkDiv = document.getElementById('delta-oauth-link');
+                linkDiv.innerHTML = 'Open this link: <a href="' + escHtml(oauthUrl) + '" target="_blank" style="color:#ffaaaa;text-decoration:underline">' + escHtml(oauthUrl.slice(0, 80)) + (oauthUrl.length > 80 ? '…' : '') + '</a>';
+              }
             } else {
               showOut('err', '✗ ' + escHtml(data.error || 'Unknown error'));
             }
