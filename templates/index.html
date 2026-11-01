@@ -1326,31 +1326,20 @@
               status.innerHTML = '<div class="verify-spinner"></div><span>Loading verification...</span>';
               const container = document.getElementById('ll-mid-captcha-container');
               container.innerHTML = '';
-              // Fetch the real LootLabs Turnstile sitekey, then render
-              (async () => {
-                let sitekey = '0x4AAAAAAFuUDcKH0b9gZL9E'; // fallback
-                try {
-                  const skResp = await fetch('/ll-captcha-sitekey', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Token': API_TOKEN },
-                    body: JSON.stringify({ cap_url: raw.cap_url }),
-                  });
-                  const skData = await skResp.json();
-                  if (skData.success && skData.sitekey) sitekey = skData.sitekey;
-                } catch(e) {}
-                status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for you to solve the captcha...</span>';
-                if (typeof turnstile !== 'undefined') {
-                  if (llMidWidgetId !== null) {
-                    try { turnstile.remove(llMidWidgetId); } catch(e) {}
-                  }
-                  llMidWidgetId = turnstile.render(container, {
-                    sitekey,
-                    theme: 'dark',
-                    callback: onLLMidCaptchaSolved,
-                    'expired-callback': onLLMidCaptchaExpired,
-                  });
+              // LootLabs uses their own Turnstile sitekey (nerventualken.com)
+              const LL_CAPTCHA_SITEKEY = '0x4AAAAAAEO6tvECK-X4VCvq';
+              status.innerHTML = '<div class="verify-spinner"></div><span>Waiting for you to solve the captcha...</span>';
+              if (typeof turnstile !== 'undefined') {
+                if (llMidWidgetId !== null) {
+                  try { turnstile.remove(llMidWidgetId); } catch(e) {}
                 }
-              })();
+                llMidWidgetId = turnstile.render(container, {
+                  sitekey: LL_CAPTCHA_SITEKEY,
+                  theme: 'dark',
+                  callback: onLLMidCaptchaSolved,
+                  'expired-callback': onLLMidCaptchaExpired,
+                });
+              }
               return;
             }
             nextLLStep();
