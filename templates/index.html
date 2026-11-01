@@ -940,28 +940,27 @@
     let currentLLResult   = '';
 
     // ── page visibility / stream resilience ──────────────────────────────────
-    // When the user hides the tab or navigates away mid-stream we can't keep
-    // the SSE alive. Instead: detect when the page becomes visible again and
-    // if a stream was in progress, show a clear "stream lost" message so the
-    // user knows to retry rather than staring at a frozen spinner.
+    // Track whether each stream is genuinely alive. We only show "connection
+    // lost" if the SSE actually closed while the tab was hidden — NOT just
+    // because the user opened an ad tab and came back.
+    let deltaStreamAlive = false;
+    let llStreamAlive    = false;
+
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        // Delta stream lost
+        // Delta: stream was in progress but SSE is now dead
         const outText = document.getElementById('out-text');
-        if (outText && outText.classList.contains('wait')) {
+        if (outText && outText.classList.contains('wait') && !deltaStreamAlive) {
           showOut('err', '✗ Connection lost — please paste your link and try again.');
           const btn = document.getElementById('solve-btn');
           if (btn) { btn.disabled = false; btn.textContent = 'RUN'; }
           if (deltaAbort) { try { deltaAbort.abort(); } catch(e) {} }
         }
-        // LootLabs stream lost
+        // LootLabs: stream was in progress but SSE is now dead
         const llOutText = document.getElementById('ll-out-text');
-        if (llOutText && llOutText.classList.contains('wait')) {
-          // If mid-captcha was showing, hide it
+        if (llOutText && llOutText.classList.contains('wait') && !llStreamAlive) {
           const mid = document.getElementById('ll-mid-captcha');
-          if (mid && mid.style.display !== 'none') {
-            mid.style.display = 'none';
-          }
+          if (mid && mid.style.display !== 'none') mid.style.display = 'none';
           showLLOut('err', '✗ Connection lost — please paste your link and try again.');
           const llBtn = document.getElementById('ll-solve-btn');
           if (llBtn) { llBtn.disabled = false; llBtn.textContent = 'RUN'; }
@@ -1230,12 +1229,14 @@
       const savedToken = captchaToken;
       captchaToken = '';
 
+      deltaStreamAlive = true;
       _sseStream('/solve-stream',
         { link, captcha: savedToken },
         {
           signal: deltaAbort.signal,
           onStatus: (_msg, _raw) => nextStep(),
           onDone: (data) => {
+            deltaStreamAlive = false;
             if (data.success && data.key) {
               currentKey = data.key;
               showOut('ok', '✓ Your key is ready: ' + escHtml(data.key));
@@ -1272,6 +1273,7 @@
             if (typeof turnstile !== 'undefined') turnstile.reset();
           },
           onError: (msg) => {
+            deltaStreamAlive = false;
             showOut('err', '✗ ' + escHtml(msg));
             btn.disabled = false; btn.textContent = 'RUN';
             if (typeof turnstile !== 'undefined') turnstile.reset();
@@ -1374,6 +1376,7 @@
       const savedToken = captchaToken;
       captchaToken = '';
 
+      llStreamAlive = true;
       _sseStream('/solve-lootlabs-stream',
         { link, captcha: savedToken },
         {
@@ -1411,24 +1414,24 @@
               midBtn.textContent = 'Complete the check first';
 
               // ── captcha detection — three layers ──────────────────────────
-
               let captchaDone = false;
+              let urlPollInterval = null;
+              let fallbackTimer   = null;
 
               function markCaptchaDone(auto) {
                 if (captchaDone) return;
                 captchaDone = true;
                 window.removeEventListener('message', onIframeMsg);
-                clearInterval(urlPollInterval);
-                clearTimeout(fallbackTimer);
+                if (urlPollInterval) clearInterval(urlPollInterval);
+                if (fallbackTimer)   clearTimeout(fallbackTimer);
                 status.innerHTML = '<div class="verify-spinner solved"></div><span>Verified ✓ — continuing...</span>';
                 midBtn.disabled = false;
                 midBtn.textContent = 'Continue Bypass';
-                // auto-click so user doesn't have to tap at all
+                // auto-click so user doesn't need to tap
                 if (auto) setTimeout(() => midBtn.click(), 400);
               }
 
-              // layer 1: postMessage from the iframe (works when same-origin or
-              // when LootLabs explicitly posts to parent)
+              // layer 1: postMessage from iframe
               function onIframeMsg(e) {
                 const isTurnstileOk = (
                   (typeof e.data === 'string' && (
@@ -1449,40 +1452,39 @@
               }
               window.addEventListener('message', onIframeMsg);
 
-              // layer 2: poll iframe URL — after Turnstile success nerventualken
-              // often redirects the iframe to a success/done page. we catch that
-              // even when postMessage is blocked cross-origin.
-              const urlPollInterval = setInterval(() => {
-                try {
-                  const loc = iframe.contentWindow.location.href;
-                  if (loc && (
-                    loc.includes('success') ||
-                    loc.includes('done') ||
-                    loc.includes('verified') ||
-                    loc.includes('complete') ||
-                    loc.includes('callback')
-                  )) markCaptchaDone(true);
-                } catch (_) {
-                  // cross-origin block — expected, ignore
-                }
-              }, 300);
+              // layer 2 + 3: start AFTER iframe loads so the fallback clock
+              // doesn't run while the page is still loading
+              iframe.addEventListener('load', () => {
+                // layer 2: poll iframe URL for redirect to success/done
+                urlPollInterval = setInterval(() => {
+                  try {
+                    const loc = iframe.contentWindow.location.href;
+                    if (loc && (
+                      loc.includes('success') || loc.includes('done') ||
+                      loc.includes('verified') || loc.includes('complete') ||
+                      loc.includes('callback')
+                    )) markCaptchaDone(true);
+                  } catch (_) {}
+                }, 300);
 
-              // layer 3: hard fallback — if neither fires, unlock after 6s
-              // (down from 15s — user almost always finishes in <5s)
-              const fallbackTimer = setTimeout(() => {
-                if (!captchaDone) {
-                  status.innerHTML = '<div class="verify-spinner"></div><span>Done with the check? Click Continue.</span>';
-                  midBtn.disabled = false;
-                  midBtn.textContent = 'Continue Bypass';
-                  clearInterval(urlPollInterval);
-                  window.removeEventListener('message', onIframeMsg);
-                }
-              }, 6000);
+                // layer 3: fallback — 7s after iframe finishes loading
+                // (user had time to see and solve the Turnstile)
+                fallbackTimer = setTimeout(() => {
+                  if (!captchaDone) {
+                    clearInterval(urlPollInterval);
+                    window.removeEventListener('message', onIframeMsg);
+                    status.innerHTML = '<div class="verify-spinner"></div><span>Done with the check? Click Continue.</span>';
+                    midBtn.disabled = false;
+                    midBtn.textContent = 'Continue Bypass';
+                  }
+                }, 7000);
+              });
               return;
             }
             nextLLStep();
           },
           onDone: (data) => {
+            llStreamAlive = false;
             document.getElementById('ll-mid-captcha').style.display = 'none';
             if (data.success && data.result) {
               currentLLResult = data.result;
@@ -1495,6 +1497,7 @@
             if (llWidgetId !== null && typeof turnstile !== 'undefined') turnstile.reset(llWidgetId);
           },
           onError: (msg) => {
+            llStreamAlive = false;
             document.getElementById('ll-mid-captcha').style.display = 'none';
             showLLOut('err', '✗ ' + escHtml(msg));
             btn.disabled = false; btn.textContent = 'RUN';
