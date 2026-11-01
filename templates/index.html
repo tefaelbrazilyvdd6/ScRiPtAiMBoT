@@ -839,7 +839,7 @@
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
             </div>
             <div class="verify-title">One More Check</div>
-            <div class="verify-sub">LootLabs requires a quick human check. Complete the verification below, then click Continue.</div>
+            <div class="verify-sub">Solve the Cloudflare check below, then click Continue Bypass.</div>
             <div id="ll-mid-captcha-container" style="width:100%;border-radius:8px;overflow:hidden;background:#111;min-height:120px;">
               <!-- iframe injected by JS -->
             </div>
@@ -1334,6 +1334,9 @@
               iframe.allow = 'same-origin';
               container.appendChild(iframe);
               status.innerHTML = '<div class="verify-spinner"></div><span>Complete the check above, then click Continue.</span>';
+              // Enable Continue immediately — user decides when they're done in the iframe
+              const midBtn = document.getElementById('ll-mid-captcha-btn');
+              midBtn.disabled = false;
               return;
             }
             nextLLStep();
