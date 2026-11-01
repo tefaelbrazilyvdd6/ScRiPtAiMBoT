@@ -608,7 +608,7 @@ def _ll_canserbero(session, ws_domain, tasks, p_key, tid, ws_session, origin, do
     ping_stop = threading.Event()
     try:
         ws = _websocket.create_connection(
-            ws_url, timeout=5,
+            ws_url, timeout=8,
             header=_ll_ws_header_list(session),
             origin=origin if str(origin).startswith("http") else f"https://{origin}",
         )
@@ -809,7 +809,7 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
         ws_thread = threading.Thread(
             target=_ll_canserbero,
             args=(session, ws_domain, [bind], key, tid, ws_session, origin, done),
-            kwargs={"TLeft": 22},
+            kwargs={"TLeft": 40},
             daemon=True,
         )
         ws_thread.start()
@@ -853,36 +853,15 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                         emit(f"captcha verify: {vrf.status_code}")
                         _ll_fire(_ll_get, session,
                             f"https://{SYNCER}/td?ac=captcha&urid={urid}&=&cat={task_id}&tid={tid}")
-                        # nudge auto_complete right after captcha so server pushes ws result faster
-                        _ll_fire(_ll_get, session,
-                            f"https://{SYNCER}/td?ac=auto_complete&urid={urid}&cat={task_id}&tid={tid}")
                 except Exception as e:
                     emit(f"captcha step error: {e}")
             else:
                 emit("captcha task detected but no solver provided — result may fail")
 
-        ws_thread.join(timeout=22)
+        ws_thread.join(timeout=40)
 
         if done["result"]:
             emit(f"bypassed! ({taken()})")
-            return done["result"]
-
-        # first ws attempt timed out — nudge the server and retry once
-        emit("retrying WebSocket connection...")
-        _ll_fire(_ll_beacon_post, session, f"https://{shard_host}/st?uid={urid}&cat={task_id}")
-        _ll_fire(_ll_get, session,
-            f"https://{SYNCER}/td?ac=auto_complete&urid={urid}&cat={task_id}&tid={tid}")
-        ws_thread2 = threading.Thread(
-            target=_ll_canserbero,
-            args=(session, ws_domain, [bind], key, tid, ws_session, origin, done),
-            kwargs={"TLeft": 22},
-            daemon=True,
-        )
-        ws_thread2.start()
-        ws_thread2.join(timeout=22)
-
-        if done["result"]:
-            emit(f"bypassed on retry! ({taken()})")
             return done["result"]
 
         return f"bypass fail! WebSocket returned no result ({taken()})"
