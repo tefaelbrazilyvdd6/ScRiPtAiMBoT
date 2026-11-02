@@ -810,19 +810,16 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
             if _bd and _bd not in ws_domains:
                 ws_domains.append(_bd)
 
-        # Launch all available WS domains in parallel — first result wins
-        emit(f"opening WebSocket connection ({len(ws_domains)} domain(s))...")
-        ws_threads = []
-        for _wsd in ws_domains:
-            _t = threading.Thread(
-                target=_ll_canserbero,
-                args=(session, _wsd, [bind], key, tid, ws_session, origin, done),
-                kwargs={"TLeft": 40},
-                daemon=True,
-            )
-            _t.start()
-            ws_threads.append(_t)
-        ws_thread = ws_threads[0]  # kept for join below
+        def _launch_ws():
+            """Open all WS domains in parallel. Call this right before we expect a result."""
+            emit(f"opening WebSocket connection ({len(ws_domains)} domain(s))...")
+            for _wsd in ws_domains:
+                threading.Thread(
+                    target=_ll_canserbero,
+                    args=(session, _wsd, [bind], key, tid, ws_session, origin, done),
+                    kwargs={"TLeft": 40},
+                    daemon=True,
+                ).start()
 
         _ll_fire(_ll_beacon_post, session, f"https://{shard_host}/st?uid={urid}&cat={task_id}")
         ap = bind.get("action_pixel_url") or TCP.get("action_pixel_url")
@@ -842,22 +839,18 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                 try:
                     token = captcha_token_cb(cap_url)
                     if token == "iframe_done":
-                        # Fallback: user used the legacy iframe path; we don't have a real token.
-                        # Fire the tracking pixel and let the WebSocket try — it may still
-                        # succeed if the user's browser session happened to verify on LootLabs' side.
-                        emit("captcha iframe completed — waiting for WebSocket result...")
+                        emit("captcha iframe completed — opening WebSocket now...")
                         _ll_fire(_ll_get, session,
                             f"https://{SYNCER}/td?ac=captcha&urid={urid}&=&cat={task_id}&tid={tid}")
-                        # Note: without a real token from /captcha/verify the WebSocket
-                        # is unlikely to return a result.  The native-Turnstile path
-                        # (sitekey sent in captcha_needed) avoids this entirely.
+                        # Open WS AFTER captcha solve — full 40s window from this point
+                        _launch_ws()
                     elif token:
                         emit("captcha token received, verifying...")
                         vrf = session.post(
                             f"https://{SYNCER}/captcha/verify",
                             json={"urid": str(urid), "token": token},
                             headers={
-                                "Origin":       origin,   # must match the LootLabs page, not SYNCER
+                                "Origin":       origin,
                                 "Referer":      cap_url,
                                 "Content-Type": "application/json",
                             },
@@ -866,10 +859,17 @@ def _ll_get_dest(url, status_cb=None, captcha_token_cb=None):
                         emit(f"captcha verify: {vrf.status_code}")
                         _ll_fire(_ll_get, session,
                             f"https://{SYNCER}/td?ac=captcha&urid={urid}&=&cat={task_id}&tid={tid}")
+                        # Open WS AFTER verify — fresh connection with captcha already done
+                        _launch_ws()
                 except Exception as e:
                     emit(f"captcha step error: {e}")
+                    _launch_ws()
             else:
                 emit("captcha task detected but no solver provided — result may fail")
+                _launch_ws()
+        else:
+            # No captcha — open WS immediately as before
+            _launch_ws()
 
         # Wait for first result — poll every 0.2s up to 42s total
         _deadline = time.time() + 42
